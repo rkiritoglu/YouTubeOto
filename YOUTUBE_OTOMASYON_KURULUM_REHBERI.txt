@@ -1,0 +1,188 @@
+================================================================================
+YOUTUBE SHORTS YAPAY ZEKA OTOMASYON SİSTEMİ - ADIM ADIM KURULUM VE KULLANIM REHBERİ
+================================================================================
+
+Tebrikler! YouTube Shorts video üretim ve yükleme otomasyonu için gerekli olan tüm
+Python modülleri, prompt şablonları, ses ve video kurgu motorları oluşturulmuş ve
+başarıyla test edilmiştir.
+
+Bu rehber, sistemi kendi API anahtarlarınız ve YouTube kanalınız ile nasıl tam 
+otomatik hale getireceğinizi adım adım anlatmaktadır.
+
+--------------------------------------------------------------------------------
+DİZİN VE DOSYA YAPISI
+--------------------------------------------------------------------------------
+Projeniz şu dosyalardan oluşmaktadır:
+
+├── .env                          -> API anahtarlarınızı ve ayarlarınızı tutan gizli dosya
+├── .env.example                  -> API anahtarlarının şablon hali
+├── requirements.txt              -> Gerekli Python kütüphaneleri listesi
+├── prompts.py                    -> Viral Shorts promptları, sahne kuralları ve stil şablonları
+├── generate_script.py            -> Google Gemini API (gemini-2.5-flash) ile JSON senaryo üretici
+├── audio_generator.py            -> ElevenLabs ve yerleşik Edge-TTS ile Türkçe seslendirme motoru
+├── video_builder.py              -> Pexels API dikey video indirici ve MoviePy montaj motoru
+├── youtube_uploader.py           -> YouTube Data API v3 ile kanala otomatik video yükleyici
+├── main.py                       -> Tüm süreci tek tıkla çalıştıran ana orkestrasyon dosyası
+├── final_youtube_shorts.mp4      -> Test aşamasında başarıyla üretilen örnek video
+└── YOUTUBE_OTOMASYON_KURULUM_REHBERI.txt -> Bu rehber dosyası
+
+
+================================================================================
+ADIM 1: GEREKLİ KÜTÜPHANELERİN KURULUMU
+================================================================================
+Bilgisayarınızda PowerShell veya Komut İstemi (CMD) açarak proje klasörüne gidin:
+
+  cd C:\Users\user001\Documents\Rifat\YouTubeOto
+
+Gerekli tüm kütüphaneleri yüklemek için şu komutu çalıştırın:
+
+  pip install -r requirements.txt
+
+(Not: Sisteminizde bu kütüphaneler zaten kurulmuş ve test edilmiştir.)
+
+
+================================================================================
+ADIM 2: API ANAHTARLARININ ALINMASI VE .env DOSYASINA EKLENMESİ
+================================================================================
+Proje klasöründeki `.env` dosyasını Not Defteri veya kod editörü ile açın.
+Aşağıdaki anahtarları ilgili sitelerden ücretsiz alıp tırnak işareti olmadan yapıştırın:
+
+1. GOOGLE GEMINI API KEY (Senaryo Üretimi İçin):
+   - Adres: https://aistudio.google.com/app/apikey
+   - "Create API key" butonuna tıklayın ve aldığınız anahtarı kopyalayın.
+   - .env dosyasına yazın:
+     GEMINI_API_KEY=AIzaSy...
+
+2. PEXELS API KEY (Telifsiz Dikey Stok Videolar İçin - Tamamen Ücretsizdir):
+   - Adres: https://www.pexels.com/api/
+   - Ücretsiz bir üyelik açın veya giriş yapın.
+   - "Your API Key" kısmından anahtarınızı oluşturup kopyalayın.
+   - .env dosyasına yazın:
+     PEXELS_API_KEY=563492...
+
+3. ELEVENLABS API KEY (Yapay Zeka İnsan Sesi İçin - İsteğe Bağlı):
+   - Adres: https://elevenlabs.io/
+   - Ücretsiz üyelik oluşturun, Profil -> API Keys kısmından anahtarınızı alın.
+   - .env dosyasına yazın:
+     ELEVENLABS_API_KEY=sk_...
+   - [ÖNEMLİ İPUCU]: Eğer ElevenLabs anahtarınız yoksa veya krediniz biterse hiçbir
+     şey yapmanıza gerek yoktur! Kodumuz otomatik olarak Microsoft Edge-TTS'in
+     yüksek kaliteli Türkçe doğal seslerine (Ahmet / Emel) geçer ve ÜCRETSİZ çalışır.
+
+
+================================================================================
+ADIM 3: YOUTUBE DATA API v3 VE OAUTH (client_secret.json) KURULUMU
+================================================================================
+Videonun YouTube kanalınıza otomatik yüklenebilmesi için Google Cloud üzerinden bir
+OAuth kimlik belgesi almanız gerekir. Bu işlem yalnızca bir kez yapılır:
+
+1. Google Cloud Console'a gidin:
+   https://console.cloud.google.com/
+
+2. Sol üstten "Select a project" -> "New Project" (Yeni Proje) diyerek bir proje oluşturun
+   (Örn: "YouTube-Bot").
+
+3. YouTube API'yi Etkinleştirin:
+   - Sol menüden "APIs & Services" (API'ler ve Hizmetler) -> "Library" (Kitaplık) sekmesine gidin.
+   - Arama kutusuna "YouTube Data API v3" yazın ve "Enable" (Etkinleştir) butonuna basın.
+
+4. OAuth İzin Ekranını Ayarlayın (OAuth Consent Screen):
+   - Sol menüden "OAuth consent screen" sekmesine tıklayın.
+   - User Type olarak "External" (Harici) seçin ve "Create" deyin.
+   - Uygulama adı (App name) yazın (Örn: "YouTubeUploader"), e-posta adresinizi girin.
+   - "Test users" (Test kullanıcıları) kısmına videoyu yükleyeceğiniz kendi YouTube/Google
+     e-posta adresinizi mutlaka ekleyin ve kaydedin.
+
+5. Kimlik Bilgilerini İndirin (OAuth Client ID):
+   - Sol menüden "Credentials" (Kimlik Bilgileri) -> "Create Credentials" -> "OAuth client ID" seçin.
+   - Application type: "Desktop app" (Masaüstü Uygulaması) seçin.
+   - "Create" butonuna basın.
+   - Açılan ekranda "DOWNLOAD JSON" butonuna tıklayarak kimlik dosyasını indirin.
+   - İndirdiğiniz dosyanın adını "client_secret.json" olarak değiştirin ve doğrudan
+     bu proje klasörüne (`C:\Users\user001\Documents\Rifat\YouTubeOto`) yapıştırın.
+
+
+================================================================================
+ADIM 4: SİSTEMİ ÇALIŞTIRMA VE VİDEO ÜRETİMİ
+================================================================================
+
+1. TEK TIKLA ÇALIŞTIRMA (Varsayılan Konuyla):
+   PowerShell üzerinden şu komutu vermeniz yeterlidir:
+
+     python main.py
+
+   Bu komut:
+   - Gemini ile senaryoyu ve sahne anahtar kelimelerini üretir.
+   - Seslendirmeyi gerçekleştirir.
+   - Pexels'ten dikey HD videoları indirip MoviePy ile montajlar.
+   - YouTube'a "private" (gizli) olarak yükler ve size linkini verir.
+
+2. ÖZEL BİR KONU VE STİL BELİRTEREK ÇALIŞTIRMA:
+   Komut satırından istediğiniz konuyu ve görsel stilini parametre olarak verebilirsiniz:
+
+     python main.py --topic "Yapay Zeka Dünyayı Nasıl Değiştirecek" --style "cyberpunk_neon" --privacy "private"
+
+   Kullanabileceğiniz Stil Seçenekleri:
+   - documentary_history : Tarih, arkeoloji ve gizem belgeselleri için.
+   - cinematic_dark      : Karanlık, merak uyandırıcı ve sinematik konular için.
+   - cyberpunk_neon      : Teknoloji, gelecek ve yapay zeka videoları için.
+   - science_space       : Uzay, evren ve bilim videoları için.
+   - hyper_realistic     : Gerçekçi portre ve insan odaklı içerikler için.
+
+   Gizlilik Seçenekleri (--privacy):
+   - private  : Sadece sizin görebileceğiniz gizli video olarak yükler (Önerilen test modu).
+   - unlisted : Sadece linke sahip olanların izleyebileceği liste dışı video.
+   - public   : Doğrudan herkese açık yayınlar.
+
+
+================================================================================
+ADIM 5: İLK YOUTUBE YÜKLEMESİNDE ONAY VERME (YALNIZCA İLK SEFERE MAHSUS)
+================================================================================
+- `client_secret.json` dosyasını koyup `python main.py` komutunu ilk çalıştırdığınızda,
+  otomatik olarak web tarayıcınız açılacaktır.
+- YouTube kanalınızın bağlı olduğu Google hesabını seçin.
+- Karşınıza "Google hasn't verified this app" (Google bu uygulamayı doğrulamadı)
+  uyarısı çıkarsa; "Advanced" (Gelişmiş) -> "Go to YouTubeUploader (unsafe)" bağlantısına
+  tıklayarak izin verin (Çünkü bu uygulamayı kendi Google Cloud hesabınızda siz oluşturdunuz).
+- İzin verdikten sonra sistem bir `token.pickle` dosyası oluşturur.
+- Bir sonraki çalıştırmalarınızda tarayıcı ASLA açılmaz; tamamen arka planda sessizce yüklenir!
+
+
+================================================================================
+MODÜLLERİ AYRI AYRI TEST ETMEK İSTERSENİZ
+================================================================================
+Tüm sistem yerine parçaları tek tek denemek isterseniz:
+
+- Sadece Senaryo Üretimini Denemek İçin:
+    python generate_script.py
+
+- Sadece Ses Motorunu Denemek İçin:
+    python audio_generator.py
+
+- Sadece Video Montaj Motorunu Denemek İçin:
+    python video_builder.py
+
+- Sadece YouTube Yükleme Testi İçin:
+    python youtube_uploader.py
+
+
+================================================================================
+SIKÇA SORULAN SORULAR VE İPUÇLARI
+================================================================================
+Soru: Pexels API anahtarım olmadan video üretebilir miyim?
+Cevap: Evet! video_builder.py modülümüz akıllı yedekleme mekanizmasına sahiptir.
+       API anahtarı bulunamazsa sinematik renk geçişli estetik dikey arka planlar
+       oluşturarak render işlemini asla aksatmaz.
+
+Soru: YouTube kotası biterse ne olur?
+Cevap: Üretilen MP4 videosu her zaman proje klasörünüzde (`final_youtube_shorts.mp4`)
+       saklanır. İsterseniz videoyu YouTube Studio web sitesinden sürükle-bırak ile
+       kendiniz de yükleyebilirsiniz.
+
+Soru: Video süresini nasıl değiştirebilirim?
+Cevap: `prompts.py` dosyasında yer alan `SYSTEM_SCRIPT_PROMPT` içerisindeki sahne
+       sayısı kuralını veya `USER_SCRIPT_PROMPT_TEMPLATE` bölümünü dilediğiniz gibi
+       düzenleyebilirsiniz.
+
+Başarılar dileriz!
+================================================================================

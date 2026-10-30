@@ -1,0 +1,31 @@
+# YouTube Otomasyon Sistemi İçin Gerekli Bağımlılıklar (Python Kütüphaneleri)
+
+# 1. Google Gemini AI SDK (Senaryo ve görsel anahtar kelimeleri üretimi)
+google-genai>=2.34.0
+
+# 2. Ortam Değişkenleri Yönetimi (.env dosyasından API anahtarlarını okumak için)
+python-dotenv>=1.0.0
+
+# 3. HTTP İstekleri (Pexels API'den stok video indirmek ve harici servisler için)
+requests>=2.31.0
+
+# 4. Seslendirme (Metinden Sese - TTS): ElevenLabs Resmi SDK
+elevenlabs>=2.75.0
+
+# 5. Ücretsiz / Alternatif Türkçe Seslendirme (API anahtarsız yedek motor olarak)
+edge-tts>=7.0.0
+
+# 6. Video ve Ses Montajı, Birleştirme ve Render Motoru
+moviepy>=2.0.0
+imageio>=2.35.0
+imageio-ffmpeg>=0.5.0
+decorator>=5.1.0
+numpy>=1.26.0
+proglog>=0.1.10
+tqdm>=4.66.0
+
+# 7. YouTube Data API v3 ve Google OAuth 2.0 İstemci Kütüphaneleri
+google-api-python-client>=2.150.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+google-auth>=2.35.0

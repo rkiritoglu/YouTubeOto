@@ -1,0 +1,78 @@
+# ==============================================================================
+# YouTube Automation - Git Ignore Dosyası
+# ==============================================================================
+
+# 1. Gizli Bilgiler ve API Anahtarları (Kesinlikle GitHub'a gönderilmemelidir!)
+.env
+.env.local
+.env.*.local
+client_secret.json
+client_secret_*.json
+token.pickle
+token.json
+credentials.json
+
+# 2. Üretilen Geçici Ses ve Video Dosyaları (Büyük boyutlu ikili dosyalar)
+*.mp4
+*.mp3
+*.wav
+*.m4a
+temp_audio/
+test_audio_output/
+temp_stock_*.mp4
+final_youtube_shorts.mp4
+test_shorts_output.mp4
+
+# 3. Python Önbellek ve Derleme Dosyaları
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 4. Sanal Ortamlar (Virtual Environments)
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# 5. Editör ve Geliştirme Ortamı Dosyaları
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# 6. İşletim Sistemi Dosyaları
+Thumbs.db
+desktop.ini
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# 7. Test ve Günlük (Log) Dosyaları
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
