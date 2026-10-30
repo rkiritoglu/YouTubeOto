@@ -30,7 +30,8 @@ def run_full_youtube_pipeline(
     topic: str = "Büyük Piramitlerin Altında Bulunan Gizli Odalar",
     style_preset: str = "documentary_history",
     publish_status: str = "private",
-    output_video_path: str = "final_youtube_shorts.mp4"
+    output_video_path: str = "final_youtube_shorts.mp4",
+    skip_upload: bool = False
 ) -> bool:
     """
     Uçtan uca tüm YouTube video otomasyon sürecini sırasıyla yönetir.
@@ -99,6 +100,14 @@ def run_full_youtube_pipeline(
     # ---------------------------------------------------------------------------
     # ADIM 4: YouTube Data API v3 ile Kanala Yükleme
     # ---------------------------------------------------------------------------
+    if skip_upload:
+        print("\n[4/4] ⏭️ ADIM 4: YouTube yüklemesi atlandı (--skip-upload aktif).")
+        print("\n" + "=" * 70)
+        print("🎉 TEBRİKLER! VİDEO BAŞARIYLA OLUŞTURULDU!")
+        print(f"📁 Video Dosyası: {os.path.abspath(rendered_file)}")
+        print("=" * 70)
+        return True
+
     print("\n[4/4] 📤 ADIM 4: YouTube Data API v3 ile videonun kanala yüklenmesi...")
     clean_topic_tag = "".join(ch for ch in topic.lower() if ch.isalnum())
     tags = ["shorts", "viral", "ai", clean_topic_tag]
@@ -160,6 +169,11 @@ def main():
         default="final_youtube_shorts.mp4",
         help="Oluşturulacak video dosya adı"
     )
+    parser.add_argument(
+        "--skip-upload",
+        action="store_true",
+        help="YouTube yükleme adımını atlar, sadece videoyu yerel olarak üretir"
+    )
 
     args = parser.parse_args()
 
@@ -167,7 +181,8 @@ def main():
         topic=args.topic,
         style_preset=args.style,
         publish_status=args.privacy,
-        output_video_path=args.output
+        output_video_path=args.output,
+        skip_upload=args.skip_upload
     )
 
     if not success:
