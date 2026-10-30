@@ -107,16 +107,30 @@ def create_youtube_script(topic: str, style_preset: str = "documentary_history")
             # prompts.py dosyasındaki fonksiyonla kullanıcı komutunu hazırla
             user_prompt = build_script_prompt(topic, style_preset=style_preset)
 
-            # Gemini model çağrısı (JSON modu aktif)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_SCRIPT_PROMPT,
-                    response_mime_type="application/json",  # Modelin kesin JSON yanıt vermesini zorunlu kılar
-                    temperature=0.7,
-                ),
-            )
+            # Gemini model çağrısı (Güncel gemini-3.8-flash modeli)
+            try:
+                model_name = 'gemini-3.8-flash'
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_SCRIPT_PROMPT,
+                        response_mime_type="application/json",
+                        temperature=0.7,
+                    ),
+                )
+            except Exception:
+                # Alternatif model yedeği
+                model_name = 'gemini-2.5-flash'
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_SCRIPT_PROMPT,
+                        response_mime_type="application/json",
+                        temperature=0.7,
+                    ),
+                )
 
             raw_text = response.text.strip()
             

@@ -5,7 +5,7 @@ Bu modülün amacı:
 1. YouTube Shorts video üretiminin 4 temel halkasını tek bir komutla uçtan uca çalıştırmak:
    - Adım 1: Gemini API ile senaryo, başlık, açıklama ve sahne bazlı stok arama terimleri üretimi.
    - Adım 2: ElevenLabs / Edge-TTS ile sahne metinlerinin yüksek kaliteli Türkçe seslendirmesi (.mp3).
-   - Adım 3: Pexels API'den dikey stok videoların indirilmesi ve MoviePy ile seslere göre montajlanıp MP4 render alınması.
+   - Adım 3: Pixabay API'den stok videoların indirilmesi ve MoviePy ile seslere göre montajlanıp MP4 render alınması.
    - Adım 4: YouTube Data API v3 ile oluşturulan videonun kanala otomatik yüklenmesi.
 2. Komut satırından parametre alabilme (argparse desteği):
    Örnek: python main.py --topic "Mars'ta Yaşam" --style "science_space" --privacy "private"
@@ -84,9 +84,9 @@ def run_full_youtube_pipeline(
     print(f"  ✅ {len(valid_scenes)} sahnenin ses dosyaları başarıyla hazırlandı.")
 
     # ---------------------------------------------------------------------------
-    # ADIM 3: Pexels API + MoviePy ile Stok Video Montajı ve Render
+    # ADIM 3: Pixabay API + MoviePy ile Stok Video Montajı ve Render
     # ---------------------------------------------------------------------------
-    print("\n[3/4] 🎬 ADIM 3: Dikey stok videolar indiriliyor ve kurgu render ediliyor...")
+    print("\n[3/4] 🎬 ADIM 3: Pixabay stok videoları indiriliyor ve kurgu render ediliyor...")
     rendered_file = build_final_video(valid_scenes, output_video_path=output_video_path)
 
     if not rendered_file or not os.path.exists(rendered_file):

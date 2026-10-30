@@ -6,8 +6,8 @@ Tebrikler! YouTube Shorts video üretim ve yükleme otomasyonu için gerekli ola
 Python modülleri, prompt şablonları, ses ve video kurgu motorları oluşturulmuş ve
 başarıyla test edilmiştir.
 
-Bu rehber, sistemi kendi API anahtarlarınız ve YouTube kanalınız ile nasıl tam 
-otomatik hale getireceğinizi adım adım anlatmaktadır.
+Bu rehber, sistemi kendi API anahtarlarınız (Pixabay, Gemini) ve YouTube kanalınız
+ile nasıl tam otomatik hale getireceğinizi adım adım anlatmaktadır.
 
 --------------------------------------------------------------------------------
 DİZİN VE DOSYA YAPISI
@@ -20,7 +20,7 @@ Projeniz şu dosyalardan oluşmaktadır:
 ├── prompts.py                    -> Viral Shorts promptları, sahne kuralları ve stil şablonları
 ├── generate_script.py            -> Google Gemini API (gemini-2.5-flash) ile JSON senaryo üretici
 ├── audio_generator.py            -> ElevenLabs ve yerleşik Edge-TTS ile Türkçe seslendirme motoru
-├── video_builder.py              -> Pexels API dikey video indirici ve MoviePy montaj motoru
+├── video_builder.py              -> Pixabay API dikey video indirici ve MoviePy montaj motoru
 ├── youtube_uploader.py           -> YouTube Data API v3 ile kanala otomatik video yükleyici
 ├── main.py                       -> Tüm süreci tek tıkla çalıştıran ana orkestrasyon dosyası
 ├── final_youtube_shorts.mp4      -> Test aşamasında başarıyla üretilen örnek video
@@ -45,20 +45,22 @@ Gerekli tüm kütüphaneleri yüklemek için şu komutu çalıştırın:
 ADIM 2: API ANAHTARLARININ ALINMASI VE .env DOSYASINA EKLENMESİ
 ================================================================================
 Proje klasöründeki `.env` dosyasını Not Defteri veya kod editörü ile açın.
-Aşağıdaki anahtarları ilgili sitelerden ücretsiz alıp tırnak işareti olmadan yapıştırın:
+Aşağıdaki anahtarları ilgili sitelerden alıp tırnak işareti olmadan yapıştırın:
 
-1. GOOGLE GEMINI API KEY (Senaryo Üretimi İçin):
+1. PIXABAY API KEY (Telifsiz Stok Videolar İçin - Tamamen Ücretsiz ve Anında Alınır):
+   - Adres: https://pixabay.com/
+   - Sağ üstten "Sign up" (Kayıt ol) diyerek ücretsiz bir hesap açın veya Google ile giriş yapın.
+   - Giriş yaptıktan sonra şu adrese gidin: https://pixabay.com/api/docs/
+   - Sayfada "Search Videos" veya "Parameters" başlığının hemen üzerinde yeşil renkte
+     kendi benzersiz API Key'inizi göreceksiniz (Örn: 48923456-abcdef0123456789).
+   - Bu anahtarı kopyalayıp .env dosyasına yapıştırın:
+     PIXABAY_API_KEY=48923456-abcdef0123456789
+
+2. GOOGLE GEMINI API KEY (Senaryo Üretimi İçin - Ücretsizdir):
    - Adres: https://aistudio.google.com/app/apikey
    - "Create API key" butonuna tıklayın ve aldığınız anahtarı kopyalayın.
    - .env dosyasına yazın:
      GEMINI_API_KEY=AIzaSy...
-
-2. PEXELS API KEY (Telifsiz Dikey Stok Videolar İçin - Tamamen Ücretsizdir):
-   - Adres: https://www.pexels.com/api/
-   - Ücretsiz bir üyelik açın veya giriş yapın.
-   - "Your API Key" kısmından anahtarınızı oluşturup kopyalayın.
-   - .env dosyasına yazın:
-     PEXELS_API_KEY=563492...
 
 3. ELEVENLABS API KEY (Yapay Zeka İnsan Sesi İçin - İsteğe Bağlı):
    - Adres: https://elevenlabs.io/
@@ -114,7 +116,7 @@ ADIM 4: SİSTEMİ ÇALIŞTIRMA VE VİDEO ÜRETİMİ
    Bu komut:
    - Gemini ile senaryoyu ve sahne anahtar kelimelerini üretir.
    - Seslendirmeyi gerçekleştirir.
-   - Pexels'ten dikey HD videoları indirip MoviePy ile montajlar.
+   - Pixabay'den stok videoları indirip MoviePy ile dikey Shorts olarak montajlar.
    - YouTube'a "private" (gizli) olarak yükler ve size linkini verir.
 
 2. ÖZEL BİR KONU VE STİL BELİRTEREK ÇALIŞTIRMA:
@@ -143,7 +145,7 @@ ADIM 5: İLK YOUTUBE YÜKLEMESİNDE ONAY VERME (YALNIZCA İLK SEFERE MAHSUS)
 - YouTube kanalınızın bağlı olduğu Google hesabını seçin.
 - Karşınıza "Google hasn't verified this app" (Google bu uygulamayı doğrulamadı)
   uyarısı çıkarsa; "Advanced" (Gelişmiş) -> "Go to YouTubeUploader (unsafe)" bağlantısına
-  tıklayarak izin verin (Çünkü bu uygulamayı kendi Google Cloud hesabınızda siz oluşturdunuz).
+  tıklayarak izin verin.
 - İzin verdikten sonra sistem bir `token.pickle` dosyası oluşturur.
 - Bir sonraki çalıştırmalarınızda tarayıcı ASLA açılmaz; tamamen arka planda sessizce yüklenir!
 
@@ -169,20 +171,19 @@ Tüm sistem yerine parçaları tek tek denemek isterseniz:
 ================================================================================
 SIKÇA SORULAN SORULAR VE İPUÇLARI
 ================================================================================
-Soru: Pexels API anahtarım olmadan video üretebilir miyim?
-Cevap: Evet! video_builder.py modülümüz akıllı yedekleme mekanizmasına sahiptir.
-       API anahtarı bulunamazsa sinematik renk geçişli estetik dikey arka planlar
-       oluşturarak render işlemini asla aksatmaz.
+Soru: Pixabay'den gelen videolar yatay olursa dikey Shorts'ta nasıl gözükür?
+Cevap: video_builder.py modülümüz akıllı merkez kırpma (center-crop) özelliğine sahiptir.
+       Yatay videoları sağdan ve soldan otomatik kırparak tam 1080x1920 dikey ekrana
+       oturtur; hiçbir şekilde esneme veya siyah kenarlık oluşmaz.
+
+Soru: Pixabay API anahtarı olmadan video üretebilir miyim?
+Cevap: Evet! API anahtarı girilmemişse video_builder.py estetik sinematik dikey
+       arka planlar üreterek kurguyu ve render işlemini başarıyla tamamlar.
 
 Soru: YouTube kotası biterse ne olur?
 Cevap: Üretilen MP4 videosu her zaman proje klasörünüzde (`final_youtube_shorts.mp4`)
        saklanır. İsterseniz videoyu YouTube Studio web sitesinden sürükle-bırak ile
        kendiniz de yükleyebilirsiniz.
-
-Soru: Video süresini nasıl değiştirebilirim?
-Cevap: `prompts.py` dosyasında yer alan `SYSTEM_SCRIPT_PROMPT` içerisindeki sahne
-       sayısı kuralını veya `USER_SCRIPT_PROMPT_TEMPLATE` bölümünü dilediğiniz gibi
-       düzenleyebilirsiniz.
 
 Başarılar dileriz!
 ================================================================================
