@@ -2,16 +2,17 @@
 generate_script.py - Google Gemini API ile Yapılandırılmış Senaryo Üretici
 
 Bu modülün amacı:
-1. Google'ın yeni 'google-genai' SDK'sını kullanarak Gemini modellerine (gemini-2.5-flash) bağlanmak.
-2. 'prompts.py' içerisindeki sistem ve kullanıcı prompt şablonlarını modele göndermek.
-3. Modelden saf JSON çıktısı (Structured Output / JSON Mode) almak ve Python dictionary yapısına çevirmek.
-4. Senaryodaki sahneleri (metin, stok video arama terimleri, görsel promptları) ayrıştırmak ve doğrulamak.
+1. Google'ın yeni 'google-genai' SDK'sını kullanarak güncel Gemini modellerine bağlanmak.
+2. 'prompts.py' içerisindeki sistem ve kullanıcı prompt şablonlarını modele iletmek.
+3. Modelden kesin ve saf JSON çıktısı (Structured Output / JSON Mode) almak ve Python dictionary'ye çevirmek.
+4. Versiyon (404 Not Found) veya anlık yoğunluk (503 High Demand) hatalarına karşı
+   otomatik basamaklı model yedekleme zinciri (Cascading Model Fallback) çalıştırmak.
 """
 
 import os
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 from dotenv import load_dotenv
 
 # prompts.py modülümüzden kuralları ve yardımcı fonksiyonları içe aktarıyoruz
@@ -23,6 +24,16 @@ from prompts import (
 
 # .env dosyasındaki ortam değişkenlerini belleğe yükle
 load_dotenv()
+
+# En kararlı ve güncel modellerin öncelik sırasına göre listesi
+# Eğer biri 503 yoğunluk veya 404 versiyon hatası verirse sıradakine otomatik geçilir
+CANDIDATE_GEMINI_MODELS: List[str] = [
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
+    "gemini-3.8-flash"
+]
 
 
 def get_gemini_client():
@@ -44,7 +55,7 @@ def get_gemini_client():
 
 def get_mock_script(topic: str) -> Dict[str, Any]:
     """
-    API anahtarı girilmediğinde veya test amaçlı çalıştırıldığında
+    API anahtarı girilmediğinde veya internet/kota kesintisinde
     sistemin kesintiye uğramadan çalışabilmesi için örnek bir dikey video senaryosu döndürür.
     """
     return {
@@ -101,48 +112,51 @@ def create_youtube_script(topic: str, style_preset: str = "documentary_history")
         print("[BİLGİ] Sistem kesintisiz test için yerleşik zengin şablonu (Simülasyon Senaryosu) kullanıyor.")
         script_data = get_mock_script(topic)
     else:
-        try:
-            from google.genai import types
+        from google.genai import types
 
-            # prompts.py dosyasındaki fonksiyonla kullanıcı komutunu hazırla
-            user_prompt = build_script_prompt(topic, style_preset=style_preset)
+        # prompts.py dosyasındaki fonksiyonla kullanıcı komutunu hazırla
+        user_prompt = build_script_prompt(topic, style_preset=style_preset)
+        script_data = None
 
-            # Gemini model çağrısı (Güncel gemini-3.8-flash modeli)
+        # Modelleri sırayla dene (Versiyon 404 veya 503 yoğunluk hatalarına karşı korumalı)
+        for model_name in CANDIDATE_GEMINI_MODELS:
             try:
-                model_name = 'gemini-3.8-flash'
+                print(f"  [Model Deneniyor] '{model_name}' ile senaryo oluşturuluyor...")
                 response = client.models.generate_content(
                     model=model_name,
                     contents=user_prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_SCRIPT_PROMPT,
-                        response_mime_type="application/json",
-                        temperature=0.7,
-                    ),
-                )
-            except Exception:
-                # Alternatif model yedeği
-                model_name = 'gemini-2.5-flash'
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_SCRIPT_PROMPT,
-                        response_mime_type="application/json",
+                        response_mime_type="application/json",  # Kesin JSON çıktısı garantiler
                         temperature=0.7,
                     ),
                 )
 
-            raw_text = response.text.strip()
-            
-            # Olası markdown işaretlerini (```json ... ```) temizle
-            clean_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-            clean_text = re.sub(r"\s*```$", "", clean_text)
+                raw_text = response.text.strip()
+                # Olası markdown işaretlerini (```json ... ```) temizle
+                clean_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                clean_text = re.sub(r"\s*```$", "", clean_text)
 
-            script_data = json.loads(clean_text)
+                parsed_json = json.loads(clean_text)
+                if parsed_json and "scenes" in parsed_json:
+                    script_data = parsed_json
+                    print(f"  -> Başarılı! Model: '{model_name}'")
+                    break
 
-        except Exception as e:
-            print(f"[UYARI] Gemini API çağrısı sırasında hata oluştu: {e}")
-            print("[BİLGİ] Güvenlik amacıyla yedek senaryo şablonuna dönülüyor.")
+            except Exception as e:
+                err_msg = str(e)
+                # Kısa ve temiz hata teşhisi
+                if "404" in err_msg or "not found" in err_msg.lower():
+                    print(f"  [Versiyon Uyarısı] '{model_name}' bu API sürümünde aktif değil, sıradaki modele geçiliyor...")
+                elif "503" in err_msg or "UNAVAILABLE" in err_msg:
+                    print(f"  [Yoğunluk Uyarısı] '{model_name}' şu anda aşırı talep alıyor, sıradaki modele geçiliyor...")
+                else:
+                    print(f"  [Uyarı] '{model_name}' çağrısı başarısız oldu: {err_msg[:60]}... Sıradaki deneniyor.")
+
+        # Eğer tüm modeller başarısız olursa yerel yedek senaryoyu devreye sok
+        if script_data is None:
+            print("[UYARI] Tüm Gemini modelleri meşguldü veya hata verdi.")
+            print("[BİLGİ] Kesintisiz akış için yerleşik senaryo şablonu kullanılıyor.")
             script_data = get_mock_script(topic)
 
     # Her sahne için görsel promptlarını prompts.py içerisindeki fonksiyonla zenginleştir

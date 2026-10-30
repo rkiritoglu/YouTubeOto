@@ -19,6 +19,9 @@ credentials.json
 *.mp3
 *.wav
 *.m4a
+*.png
+*.jpg
+*.jpeg
 temp_audio/
 test_audio_output/
 temp_stock_*.mp4
