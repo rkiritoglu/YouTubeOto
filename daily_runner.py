@@ -122,27 +122,41 @@ def generate_autonomous_railway_topic(past_topics: List[str]) -> Dict[str, str]:
             system_instruction = """
             Sen tarihi ve modern raylı sistemler konusunda kıdemli bir YouTube içerik stratejistisin.
             Görevin, dikey YouTube Shorts için izleyicide merak, hayranlık veya heyecan uyandıracak
-            TEK BİR özgün raylı sistemler konusu belirlemektir.
-            Kapsam: Efsanevi tarihi trenler, buharlı dev lokomotifler, raylı sistem savaşları/casuslukları,
-            dünyanın en hızlı Maglev/hızlı trenleri, dağ/deniz altı tünelleri, en tehlikeli veya en lüks tren hatları.
-            KESİNLİKLE daha önce işlenmiş konuları tekrar etme!
-            Sadece saf bir JSON objesi döndür: {"topic": "...", "style": "documentary_history veya science_space veya cinematic_dark"}
+            TEK BİR özgün ve gerçekçi raylı sistemler konusu belirlemektir.
+            Kapsam: Gerçek efsanevi tarihi trenler, buharlı dev lokomotifler, raylı sistem savaşları/casuslukları,
+            dünyanın en hızlı Maglev/hızlı trenleri, efsanevi dağ/deniz tünelleri (Marmaray, Gotthard, Manş vb.),
+            dünyanın en tehlikeli veya en lüks tren hatları.
+            ÖNEMLİ KURAL:
+            1. Konu başlığı (topic) MUTLAKA AKICI VE ÇARPICI BİR TÜRKÇE OLMALIDIR (asla İngilizce olmasın).
+            2. KESİNLİKLE daha önce işlenmiş konuları tekrar etme!
+            3. Sadece saf bir JSON objesi döndür: {"topic": "Türkçe Konu Başlığı", "style": "documentary_history veya science_space veya cinematic_dark"}
             """
 
-            completion = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": f"Daha önce işlenenler:\n{past_sample}\n\nBugün için yepyeni 1 raylı sistem konusu üret."}
-                ],
-                response_format={"type": "json_object"}
-            )
-            data = json.loads(completion.choices[0].message.content.strip())
-            candidate_topic = data.get("topic", "").strip()
-            if candidate_topic and candidate_topic.lower() not in past_topics_lower:
-                print(f"  ✅ [Groq Llama 3 Canlı Araştırma] Seçilen Konu: {candidate_topic}")
-                print(f"  🎨 Önerilen Stil: {data.get('style', 'documentary_history')}")
-                return data
+            candidate_topic = None
+            candidate_style = "documentary_history"
+            
+            groq_models = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
+            for model_name in groq_models:
+                try:
+                    completion = groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": f"Daha önce işlenenler:\n{past_sample}\n\nBugün için yepyeni 1 raylı sistem konusu üret."}
+                        ],
+                        response_format={"type": "json_object"}
+                    )
+                    data = json.loads(completion.choices[0].message.content.strip())
+                    topic_text = data.get("topic", "").strip()
+                    if topic_text and topic_text.lower() not in past_topics_lower:
+                        candidate_topic = topic_text
+                        candidate_style = data.get("style", "documentary_history")
+                        print(f"  ✅ [Groq AI ({model_name}) Canlı Araştırma] Seçilen Konu: {candidate_topic}")
+                        print(f"  🎨 Önerilen Stil: {candidate_style}")
+                        return {"topic": candidate_topic, "style": candidate_style}
+                except Exception as model_err:
+                    print(f"  [Uyarı] Groq model '{model_name}' hatası: {model_err}")
+                    continue
         except Exception as e:
             print(f"  [Bilgi] Groq canlı araması atlandı: {e}")
 
@@ -156,11 +170,14 @@ def generate_autonomous_railway_topic(past_topics: List[str]) -> Dict[str, str]:
             system_instruction = """
             Sen tarihi ve modern raylı sistemler konusunda kıdemli bir YouTube içerik stratejistisin.
             Görevin, dikey YouTube Shorts için izleyicide merak, hayranlık veya heyecan uyandıracak
-            TEK BİR özgün raylı sistemler konusu belirlemektir.
-            Kapsam: Efsanevi tarihi trenler, buharlı dev lokomotifler, raylı sistem savaşları/casuslukları,
-            dünyanın en hızlı Maglev/hızlı trenleri, dağ/deniz altı tünelleri, en tehlikeli veya en lüks tren hatları.
-            KESİNLİKLE daha önce işlenmiş konuları tekrar etme!
-            Sadece saf bir JSON objesi döndür: {"topic": "...", "style": "documentary_history veya science_space veya cinematic_dark"}
+            TEK BİR özgün ve gerçekçi raylı sistemler konusu belirlemektir.
+            Kapsam: Gerçek efsanevi tarihi trenler, buharlı dev lokomotifler, raylı sistem savaşları/casuslukları,
+            dünyanın en hızlı Maglev/hızlı trenleri, efsanevi dağ/deniz tünelleri (Marmaray, Gotthard, Manş vb.),
+            dünyanın en tehlikeli veya en lüks tren hatları.
+            ÖNEMLİ KURAL:
+            1. Konu başlığı (topic) MUTLAKA AKICI VE ÇARPICI BİR TÜRKÇE OLMALIDIR (asla İngilizce olmasın).
+            2. KESİNLİKLE daha önce işlenmiş konuları tekrar etme!
+            3. Sadece saf bir JSON objesi döndür: {"topic": "Türkçe Konu Başlığı", "style": "documentary_history veya science_space veya cinematic_dark"}
             """
 
             user_prompt = f"Daha önce işlenen konular:\n{past_sample}\n\nLütfen bugün için yepyeni, şoke edici veya büyüleyici 1 raylı sistem konusu üret."

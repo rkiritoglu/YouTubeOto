@@ -37,6 +37,18 @@ CANDIDATE_GEMINI_MODELS: List[str] = [
 ]
 
 
+def get_gemini_client():
+    """Gemini API istemcisi döndürür veya geçersizse None döner."""
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not gemini_key or gemini_key.startswith("AIzaSy_BURAYA") or not gemini_key.startswith("AIzaSy"):
+        return None
+    try:
+        from google import genai
+        return genai.Client(api_key=gemini_key)
+    except Exception:
+        return None
+
+
 def generate_with_groq(topic: str, style_preset: str) -> Dict[str, Any]:
     """
     Groq Cloud API üzerinden Llama 3.3 (veya Llama 3.1) kullanarak
@@ -52,9 +64,12 @@ def generate_with_groq(topic: str, style_preset: str) -> Dict[str, Any]:
 
         user_prompt = build_script_prompt(topic, style_preset=style_preset)
         
-        # En güçlü Llama 3.3 70B modeli (yüksek zeka ve akıcı Türkçe)
-        # veya çok hızlı olan Llama 3.1 8B modeli
-        models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        # Groq üzerinde aktif olan en güçlü modeller
+        models_to_try = [
+            "openai/gpt-oss-120b",
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-20b"
+        ]
 
         for model in models_to_try:
             try:
