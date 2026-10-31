@@ -1,0 +1,1 @@
+python main.py --topic "Tarihteki Tren Efsaneleri" --style "documentary_history" --privacy "private"

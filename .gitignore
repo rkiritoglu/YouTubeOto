@@ -7,7 +7,8 @@
 .env.local
 .env.*.local
 API_belgesi.txt
-*API*.txt
+API_*.txt
+*_api.txt
 client_secret.json
 client_secret_*.json
 token.pickle
