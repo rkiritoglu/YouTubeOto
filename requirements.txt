@@ -1,6 +1,7 @@
 # YouTube Otomasyon Sistemi İçin Gerekli Bağımlılıklar (Python Kütüphaneleri)
 
-# 1. Google Gemini AI SDK (Senaryo ve görsel anahtar kelimeleri üretimi)
+# 1. Yapay Zeka Modelleri (Groq / Llama 3 ve Google Gemini)
+groq>=0.9.0
 google-genai>=2.34.0
 
 # 2. Ortam Değişkenleri Yönetimi (.env dosyasından API anahtarlarını okumak için)

@@ -1,12 +1,14 @@
 """
-generate_script.py - Google Gemini API ile Yapılandırılmış Senaryo Üretici
+generate_script.py - Groq (Llama 3.3) ve Gemini Destekli Yapılandırılmış Senaryo Üretici
 
 Bu modülün amacı:
-1. Google'ın yeni 'google-genai' SDK'sını kullanarak güncel Gemini modellerine bağlanmak.
+1. Meta'nın en gelişmiş açık kaynaklı Llama 3.3 modelini Groq Cloud API üzerinden
+   ışık hızında (ücretsiz, kısıtlamasız ve Google Cloud karmaşası olmadan) çalıştırmak.
 2. 'prompts.py' içerisindeki sistem ve kullanıcı prompt şablonlarını modele iletmek.
-3. Modelden kesin ve saf JSON çıktısı (Structured Output / JSON Mode) almak ve Python dictionary'ye çevirmek.
-4. Versiyon (404 Not Found) veya anlık yoğunluk (503 High Demand) hatalarına karşı
-   otomatik basamaklı model yedekleme zinciri (Cascading Model Fallback) çalıştırmak.
+3. Modelden kesin ve saf JSON çıktısı (JSON Mode) alarak video başlığı, açıklaması,
+   etiketleri ve sahne bazlı Türkçe metin ile Pixabay stok arama terimlerini üretmek.
+4. Groq anahtarı girilmediğinde Gemini API'yi veya yerleşik zengin senaryo arşivini
+   otomatik yedek olarak çalıştırmak.
 """
 
 import os
@@ -25,8 +27,7 @@ from prompts import (
 # .env dosyasındaki ortam değişkenlerini belleğe yükle
 load_dotenv()
 
-# En kararlı ve güncel modellerin öncelik sırasına göre listesi
-# Eğer biri 503 yoğunluk veya 404 versiyon hatası verirse sıradakine otomatik geçilir
+# Gemini yedek modelleri
 CANDIDATE_GEMINI_MODELS: List[str] = [
     "gemini-3.5-flash",
     "gemini-3.6-flash",
@@ -36,55 +37,127 @@ CANDIDATE_GEMINI_MODELS: List[str] = [
 ]
 
 
-def get_gemini_client():
+def generate_with_groq(topic: str, style_preset: str) -> Dict[str, Any]:
     """
-    Ortam değişkenlerinde tanımlı GEMINI_API_KEY ile bir Google GenAI istemcisi oluşturur.
-    API anahtarı bulunamazsa None döndürür.
+    Groq Cloud API üzerinden Llama 3.3 (veya Llama 3.1) kullanarak
+    saniyeler içinde JSON formatında dikey video senaryosu üretir.
     """
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key or api_key.startswith("AIzaSy_BURAYA"):
-        return None
-    
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not groq_key or not groq_key.startswith("gsk_"):
+        return {}
+
+    try:
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+
+        user_prompt = build_script_prompt(topic, style_preset=style_preset)
+        
+        # En güçlü Llama 3.3 70B modeli (yüksek zeka ve akıcı Türkçe)
+        # veya çok hızlı olan Llama 3.1 8B modeli
+        models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+        for model in models_to_try:
+            try:
+                print(f"  [Groq AI] '{model}' ile senaryo üretiliyor...")
+                completion = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_SCRIPT_PROMPT},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.7,
+                    response_format={"type": "json_object"}
+                )
+                
+                raw_content = completion.choices[0].message.content.strip()
+                parsed = json.loads(raw_content)
+                if parsed and "scenes" in parsed:
+                    print(f"  -> Başarılı! Senaryo Groq ({model}) tarafından üretildi.")
+                    return parsed
+            except Exception as e:
+                print(f"  [Uyarı] Groq model '{model}' hatası: {e}")
+                continue
+
+    except Exception as e:
+        print(f"  [Uyarı] Groq API çağrısı başarısız oldu: {e}")
+
+    return {}
+
+
+def generate_with_gemini(topic: str, style_preset: str) -> Dict[str, Any]:
+    """Gemini API üzerinden yedek senaryo üretimi."""
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not gemini_key or gemini_key.startswith("AIzaSy_BURAYA") or not gemini_key.startswith("AIzaSy"):
+        return {}
+
     try:
         from google import genai
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        print(f"[UYARI] Gemini API istemcisi başlatılamadı: {e}")
-        return None
+        from google.genai import types
+
+        client = genai.Client(api_key=gemini_key)
+        user_prompt = build_script_prompt(topic, style_preset=style_preset)
+
+        for model_name in CANDIDATE_GEMINI_MODELS:
+            try:
+                print(f"  [Gemini AI] '{model_name}' ile senaryo oluşturuluyor...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_SCRIPT_PROMPT,
+                        response_mime_type="application/json",
+                        temperature=0.7,
+                    ),
+                )
+                raw_text = response.text.strip()
+                clean_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                clean_text = re.sub(r"\s*```$", "", clean_text)
+                parsed_json = json.loads(clean_text)
+                if parsed_json and "scenes" in parsed_json:
+                    return parsed_json
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {}
 
 
 def get_mock_script(topic: str) -> Dict[str, Any]:
-    """
-    API anahtarı girilmediğinde veya internet/kota kesintisinde
-    sistemin kesintiye uğramadan çalışabilmesi için örnek bir dikey video senaryosu döndürür.
-    """
+    """API anahtarı girilmediğinde sistemin kesintiye uğramadan çalışabilmesi için zengin senaryo döndürür."""
     return {
-        "title": f"{topic} Hakkında Şoke Eden Gerçekler!",
-        "description": f"{topic} hakkında bilmedikleriniz ve gizemler! #shorts #viral #bilgi #tarih",
+        "title": f"{topic}: Bilinmeyen Gizemler!",
+        "description": f"{topic} hakkında duymadığınız en şaşırtıcı detaylar ve gerçekler! #shorts #viral #raylisistemler #trenler #tarih",
         "scenes": [
             {
                 "scene_id": 1,
-                "narration": f"Piramitlerin altında saklanan gizli odaları daha önce hiç duymuş muydunuz?",
-                "stock_search_terms": ["pyramids egypt", "desert mystery"],
-                "ai_image_prompt": "Cinematic shot of ancient Egyptian pyramids at night with mysterious glowing chambers, 8k, photorealistic, 9:16 aspect ratio"
+                "narration": f"{topic} hakkında bilinenler sadece buzdağının görünen kısmı.",
+                "stock_search_terms": ["steam train dramatic", "railway tracks sunset"],
+                "ai_image_prompt": "Cinematic shot of historic railway tracks at dusk with fog, dramatic lighting, 9:16 aspect ratio"
             },
             {
                 "scene_id": 2,
-                "narration": "Son yüksek teknoloji radar taramaları, dev blokların ardında devasa boşluklar buldu.",
-                "stock_search_terms": ["archeologist radar", "ancient chamber"],
-                "ai_image_prompt": "Archeologists with advanced laser scanners inside a dark stone corridor, dust particles in light beam, 9:16 aspect ratio"
+                "narration": "Mühendisler tonlarca çelik ve demiri bir araya getirerek bir mucize yarattı.",
+                "stock_search_terms": ["train engine detail", "industrial steel machinery"],
+                "ai_image_prompt": "Close-up of powerful locomotive engine wheels turning, steam blowing, cinematic 9:16"
             },
             {
                 "scene_id": 3,
-                "narration": "Bazı uzmanlar bu odalarda kayıp kütüphanelerin saklandığına inanıyor.",
-                "stock_search_terms": ["ancient scrolls", "library secrets"],
-                "ai_image_prompt": "Ancient hidden underground library with golden artifacts and mysterious papyrus scrolls, dramatic lighting, 9:16 aspect ratio"
+                "narration": "Sarp dağları, derin vadileri ve aşılmaz engelleri birbirine bağladı.",
+                "stock_search_terms": ["train passing mountains", "scenic bridge railway"],
+                "ai_image_prompt": "Scenic mountain viaduct bridge with train passing high above green valley, 8k, 9:16"
             },
             {
                 "scene_id": 4,
-                "narration": "Gerçekleri öğrenmek için takipte kalın ve videoyu beğenmeyi unutmayın!",
-                "stock_search_terms": ["dramatic sky", "sunset desert"],
-                "ai_image_prompt": "Epic sunset over the desert horizon, cinematic wind blowing sand, masterpiece, 9:16 aspect ratio"
+                "narration": "Bugün bile kullanılan bu teknoloji insanlığın en büyük miraslarından biri.",
+                "stock_search_terms": ["modern bullet train", "high speed rail"],
+                "ai_image_prompt": "Futuristic high-speed bullet train moving fast through neon lit metropolis, 9:16"
+            },
+            {
+                "scene_id": 5,
+                "narration": "Peki siz bu efsanevi hat hakkında ne düşünüyorsunuz? Yorumlarda buluşalım!",
+                "stock_search_terms": ["train window view", "sunset horizon travel"],
+                "ai_image_prompt": "Cinematic POV from train window looking at epic golden sunset, 9:16 aspect ratio"
             }
         ]
     }
@@ -92,74 +165,26 @@ def get_mock_script(topic: str) -> Dict[str, Any]:
 
 def create_youtube_script(topic: str, style_preset: str = "documentary_history") -> Dict[str, Any]:
     """
-    Belirtilen konu ve stil şablonuna göre Gemini API üzerinden
-    JSON formatında senaryo ve görsel/stok arama verilerini üretir.
-    
-    Parametreler:
-        topic (str): Video konusu (Örn: 'Büyük Piramitlerin Altındaki Gizli Odalar').
-        style_preset (str): Görsel ve kurgu stili (Örn: 'documentary_history', 'cinematic_dark').
-        
-    Döndürür:
-        Dict[str, Any]: Başlık, açıklama ve sahne detaylarını içeren Python sözlüğü.
+    Belirtilen konu için önce Groq (Llama 3), sonra Gemini, en son yerel arşivden senaryo üretir.
     """
-    print(f"\n[Gemini API] '{topic}' konusu için dikey senaryo üretiliyor...")
+    print(f"\n[Senaryo Motoru] '{topic}' konusu için dikey senaryo üretiliyor...")
 
-    client = get_gemini_client()
+    script_data = None
 
-    # Eğer geçerli bir Gemini API anahtarı yoksa test/mock senaryosunu devreye al
-    if client is None:
-        print("[BİLGİ] Geçerli bir GEMINI_API_KEY bulunamadı veya henüz ayarlanmadı.")
-        print("[BİLGİ] Sistem kesintisiz test için yerleşik zengin şablonu (Simülasyon Senaryosu) kullanıyor.")
+    # 1. ÖNCELİK: Groq API (Llama 3.3) - En Hızlı ve Sorunsuz
+    script_data = generate_with_groq(topic, style_preset)
+
+    # 2. ÖNCELİK: Gemini API
+    if not script_data:
+        script_data = generate_with_gemini(topic, style_preset)
+
+    # 3. ÖNCELİK: Yerel Şablon Motoru (Sıfır Hata Garantisi)
+    if not script_data:
+        print("[BİLGİ] Yapay zeka API anahtarı ayarlanmamış veya yanıt vermedi.")
+        print("[BİLGİ] Kesintisiz akış için yerleşik senaryo şablonu kullanılıyor.")
         script_data = get_mock_script(topic)
-    else:
-        from google.genai import types
 
-        # prompts.py dosyasındaki fonksiyonla kullanıcı komutunu hazırla
-        user_prompt = build_script_prompt(topic, style_preset=style_preset)
-        script_data = None
-
-        # Modelleri sırayla dene (Versiyon 404 veya 503 yoğunluk hatalarına karşı korumalı)
-        for model_name in CANDIDATE_GEMINI_MODELS:
-            try:
-                print(f"  [Model Deneniyor] '{model_name}' ile senaryo oluşturuluyor...")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_SCRIPT_PROMPT,
-                        response_mime_type="application/json",  # Kesin JSON çıktısı garantiler
-                        temperature=0.7,
-                    ),
-                )
-
-                raw_text = response.text.strip()
-                # Olası markdown işaretlerini (```json ... ```) temizle
-                clean_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                clean_text = re.sub(r"\s*```$", "", clean_text)
-
-                parsed_json = json.loads(clean_text)
-                if parsed_json and "scenes" in parsed_json:
-                    script_data = parsed_json
-                    print(f"  -> Başarılı! Model: '{model_name}'")
-                    break
-
-            except Exception as e:
-                err_msg = str(e)
-                # Kısa ve temiz hata teşhisi
-                if "404" in err_msg or "not found" in err_msg.lower():
-                    print(f"  [Versiyon Uyarısı] '{model_name}' bu API sürümünde aktif değil, sıradaki modele geçiliyor...")
-                elif "503" in err_msg or "UNAVAILABLE" in err_msg:
-                    print(f"  [Yoğunluk Uyarısı] '{model_name}' şu anda aşırı talep alıyor, sıradaki modele geçiliyor...")
-                else:
-                    print(f"  [Uyarı] '{model_name}' çağrısı başarısız oldu: {err_msg[:60]}... Sıradaki deneniyor.")
-
-        # Eğer tüm modeller başarısız olursa yerel yedek senaryoyu devreye sok
-        if script_data is None:
-            print("[UYARI] Tüm Gemini modelleri meşguldü veya hata verdi.")
-            print("[BİLGİ] Kesintisiz akış için yerleşik senaryo şablonu kullanılıyor.")
-            script_data = get_mock_script(topic)
-
-    # Her sahne için görsel promptlarını prompts.py içerisindeki fonksiyonla zenginleştir
+    # Her sahne için görsel promptlarını zenginleştir
     for scene in script_data.get("scenes", []):
         raw_ai_prompt = scene.get("ai_image_prompt", "")
         if raw_ai_prompt:
@@ -175,10 +200,10 @@ def create_youtube_script(topic: str, style_preset: str = "documentary_history")
 # TEST VE ÇALIŞTIRMA BLOKU
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    TEST_TOPIC = "Büyük Piramitlerin Altında Bulunan Gizli Odalar"
+    TEST_TOPIC = "Orient Express: Doğu Ekspresinin Gizemleri"
     STYLE = "documentary_history"
 
-    print("=== generate_script.py Testi Başlatıldı ===")
+    print("=== generate_script.py (Groq & Llama 3 Destekli) Test Ediliyor ===")
     result = create_youtube_script(topic=TEST_TOPIC, style_preset=STYLE)
 
     print("\n--- ÜRETİLEN SENARYO DETAYLARI ---")
@@ -190,6 +215,5 @@ if __name__ == "__main__":
         print(f"\n[Sahne {scene.get('scene_id')}]")
         print(f"  🎙️ Metin: {scene.get('narration')}")
         print(f"  🔍 Stok Arama Terimleri: {scene.get('stock_search_terms')}")
-        print(f"  🎨 Görsel Prompt: {scene.get('ai_image_prompt_enhanced')[:60]}...")
 
     print("\n✅ generate_script.py testi başarıyla tamamlandı!")

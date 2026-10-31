@@ -47,7 +47,15 @@ ADIM 2: API ANAHTARLARININ ALINMASI VE .env DOSYASINA EKLENMESİ
 Proje klasöründeki `.env` dosyasını Not Defteri veya kod editörü ile açın.
 Aşağıdaki anahtarları ilgili sitelerden alıp tırnak işareti olmadan yapıştırın:
 
-1. PIXABAY API KEY (Telifsiz Stok Videolar İçin - Tamamen Ücretsiz ve Anında Alınır):
+1. GROQ API KEY (Llama 3.3 İle Hızlı & Ücretsiz Senaryo - ÖNERİLEN):
+   - Adres: https://console.groq.com/keys
+   - "Sign In" diyerek Google hesabınızla tek tıkla giriş yapın.
+   - "Create API Key" butonuna basın, bir isim yazın (Örn: YouTubeBot).
+   - Çıkan "gsk_..." ile başlayan anahtarı kopyalayın.
+   - .env dosyasına yazın:
+     GROQ_API_KEY=gsk_...
+
+2. PIXABAY API KEY (Telifsiz Stok Videolar İçin - Tamamen Ücretsiz ve Anında Alınır):
    - Adres: https://pixabay.com/
    - Sağ üstten "Sign up" (Kayıt ol) diyerek ücretsiz bir hesap açın veya Google ile giriş yapın.
    - Giriş yaptıktan sonra şu adrese gidin: https://pixabay.com/api/docs/

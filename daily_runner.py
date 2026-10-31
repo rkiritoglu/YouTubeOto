@@ -111,7 +111,42 @@ def generate_autonomous_railway_topic(past_topics: List[str]) -> Dict[str, str]:
     client = get_gemini_client()
     past_topics_lower = [p.lower() for p in past_topics]
 
-    # 1. Öncelik: Gemini API ile Canlı Üretim
+    # 1. ÖNCELİK: Groq API (Llama 3.3) ile Canlı Konu Araştırması
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if groq_key and groq_key.startswith("gsk_"):
+        try:
+            from groq import Groq
+            groq_client = Groq(api_key=groq_key)
+            past_sample = "\n".join([f"- {t}" for t in past_topics[-25:]]) if past_topics else "Yok"
+
+            system_instruction = """
+            Sen tarihi ve modern raylı sistemler konusunda kıdemli bir YouTube içerik stratejistisin.
+            Görevin, dikey YouTube Shorts için izleyicide merak, hayranlık veya heyecan uyandıracak
+            TEK BİR özgün raylı sistemler konusu belirlemektir.
+            Kapsam: Efsanevi tarihi trenler, buharlı dev lokomotifler, raylı sistem savaşları/casuslukları,
+            dünyanın en hızlı Maglev/hızlı trenleri, dağ/deniz altı tünelleri, en tehlikeli veya en lüks tren hatları.
+            KESİNLİKLE daha önce işlenmiş konuları tekrar etme!
+            Sadece saf bir JSON objesi döndür: {"topic": "...", "style": "documentary_history veya science_space veya cinematic_dark"}
+            """
+
+            completion = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": f"Daha önce işlenenler:\n{past_sample}\n\nBugün için yepyeni 1 raylı sistem konusu üret."}
+                ],
+                response_format={"type": "json_object"}
+            )
+            data = json.loads(completion.choices[0].message.content.strip())
+            candidate_topic = data.get("topic", "").strip()
+            if candidate_topic and candidate_topic.lower() not in past_topics_lower:
+                print(f"  ✅ [Groq Llama 3 Canlı Araştırma] Seçilen Konu: {candidate_topic}")
+                print(f"  🎨 Önerilen Stil: {data.get('style', 'documentary_history')}")
+                return data
+        except Exception as e:
+            print(f"  [Bilgi] Groq canlı araması atlandı: {e}")
+
+    # 2. ÖNCELİK: Gemini API ile Canlı Üretim
     if client is not None:
         try:
             from google.genai import types
