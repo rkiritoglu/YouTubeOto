@@ -30,3 +30,7 @@ google-api-python-client>=2.150.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 google-auth>=2.35.0
+
+# 8. Web Stüdyosu Arayüzü ve Görsel İşleme
+streamlit>=1.40.0
+pillow>=10.0.0

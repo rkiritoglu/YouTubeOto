@@ -9,13 +9,21 @@
 API_belgesi.txt
 API_*.txt
 *_api.txt
+*Anahtar*.txt
+groq*.txt
 client_secret.json
 client_secret_*.json
 token.pickle
 token.json
 credentials.json
 
-# 2. Üretilen Geçici Ses ve Video Dosyaları (Büyük boyutlu ikili dosyalar)
+# 2. Üretilen Geçici Ses, Video, Veritabanı ve Çıktı Klasörleri
+output/
+temp_ai_build/
+jobs.db
+jobs.db-shm
+jobs.db-wal
+*.ass
 *.mp4
 *.mp3
 *.wav

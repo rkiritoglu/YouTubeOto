@@ -85,10 +85,16 @@ def run_full_youtube_pipeline(
     print(f"  ✅ {len(valid_scenes)} sahnenin ses dosyaları başarıyla hazırlandı.")
 
     # ---------------------------------------------------------------------------
-    # ADIM 3: Pixabay API + MoviePy ile Stok Video Montajı ve Render
+    # ADIM 3: Yapay Zeka Görsel/Video + FFmpeg (zoompan + .ASS) ile Montaj ve Render
     # ---------------------------------------------------------------------------
-    print("\n[3/4] 🎬 ADIM 3: Pixabay stok videoları indiriliyor ve kurgu render ediliyor...")
-    rendered_file = build_final_video(valid_scenes, output_video_path=output_video_path)
+    print("\n[3/4] 🎬 ADIM 3: Yapay zeka sahneleri üretiliyor ve FFmpeg ile render ediliyor...")
+    rendered_file = build_final_video(
+        valid_scenes,
+        output_video_path=output_video_path,
+        global_style=script_data.get("global_style", ""),
+        visual_seed=int(script_data.get("visual_seed", 428571)),
+        use_ai_generation=True
+    )
 
     if not rendered_file or not os.path.exists(rendered_file):
         print("❌ [HATA] Final video dosyası render edilemedi! Süreç sonlandırılıyor.")

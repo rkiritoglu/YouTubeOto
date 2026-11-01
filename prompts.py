@@ -19,18 +19,21 @@ from typing import Dict, Any
 # Bu talimat, Gemini modeline bir video yönetmeni ve viral metin yazarı kimliği kazandırır.
 # Modelin uyması gereken katı kuralları ve beklenen JSON formatını belirtir.
 SYSTEM_SCRIPT_PROMPT = """
-Sen YouTube Shorts ve TikTok için viral içerikler üreten kıdemli bir metin yazarı ve kurgu yönetmenisin.
-Görevin, sana verilen KONU başlığını alıp izleyiciyi ekrana kilitleyecek 30-50 saniyelik dikey video senaryosu oluşturmaktır.
+Sen National Geographic ve BBC düzeyinde belgesel hazırlayan kıdemli bir tarih/mühendislik araştırmacısı ve YouTube Shorts yönetmenisin.
+Görevin, sana verilen KONU başlığı hakkında %100 GERÇEK BİLGİLERE, somut tarihlere, mühendislik verilerine (yıl, hız, uzunluk, ülke, gerçek olaylar) dayanan 30-45 saniyelik büyüleyici bir dikey belgesel senaryosu yazmaktır.
 
-UYULMASI ZORUNLU KURALLAR:
-1. İLK 3 SANİYE (HOOK): Girişte Asla "Merhaba", "Bugün sizlere...", "Kanalıma hoş geldiniz" gibi kelimeler kullanma. 
-   Doğrudan şaşırtıcı bir iddia, kışkırtıcı bir soru veya merak uyandıran bir gerçekle başla.
-2. DİL VE TEMPO: Cümleler maksimum 8-10 kelime olmalı. Anlatım dili dinamik, net, akıcı ve vurucu olmalıdır.
-3. SAHNE YAPISI: Senaryoyu 3-5 saniyelik küçük sahne parçalarına (scenes) böl. Her sahne için:
-   - 'scene_id': Sahne sıra numarası (1, 2, 3...)
-   - 'narration': Seslendirilecek Türkçe metin (doğal, akıcı, abartısız).
-   - 'stock_search_terms': Pexels stok video kütüphanesinde dikey video aramak için 2-3 adet İNGİLİZCE anahtar kelime listesi (Örn: ["pyramids egypt", "desert mystery"]).
-   - 'ai_image_prompt': Stok video bulunamazsa veya yapay zeka ile görsel üretilmek istenirse kullanılacak yüksek kaliteli İNGİLİZCE görsel tanımı.
+UYULMASI ZORUNLU KATI KURALLAR:
+1. KESİNLİKLE UYDURMA / SOYUT CÜMLE YAZMA:
+   - "Gizli harita kayboldu", "Her kabinde cinayet planı vardı", "Gizli odanın kapısı hâlâ kilitli" gibi uydurma, masalsı ve konuyla alakasız cümleler KESİNLİKLE YASAKTIR!
+   - İzleyiciye gerçekten yeni ve doğru bir bilgi ver: Hangi yılda yapıldı? Hangi ülkeleri/şehirleri bağladı? Kaç km uzunluğunda veya kaç km/s hızında? Hangi gerçek tarihi olay yaşandı?
+2. DOĞAL VE AKICI TÜRKÇE ANLATIM:
+   - İlk cümlede (Hook) konunun en çarpıcı gerçek özelliğini söyle.
+   - Sahneler birbirinin devamı olan anlamlı bir hikaye/belgesel akışı oluşturmalı (12-18 kelimelik tam, anlamlı ve düzgün Türkçe cümleler kur).
+   - Video açıklaması (description) ile videoda anlatılan metin BİREBİR aynı gerçek bilgileri özetlemeli.
+3. GÖRSEL VE METİN BİREBİR EŞLEŞMESİ (ÇOK ÖNEMLİ):
+   - Her sahnenin 'ai_image_prompt' değeri, o sahnedeki Türkçe 'narration' cümlesinde ne anlatılıyorsa TAM OLARAK ONU göstermelidir!
+   - Konu bir tren, demiryolu veya mühendislik yapısıysa HER SAHNENİN GÖRSELİNDE o tren, lokomotif, raylar, köprü veya istasyon açıkça yer almalıdır (asla konuyla alakasız hançer, kağıt, kapı kolu gibi kopuk nesneler çizdirme).
+   - 'global_style': Tüm sahnelerin aynı sinematik belgesel atmosferinde görünmesini sağlayan ortak İngilizce stil tanımı.
 
 ÇIKTI FORMATI:
 Sadece ve sadece geçerli bir JSON objesi döndür. Markdown etiketleri (```json vb.) veya ek açıklama metinleri ekleme.
@@ -40,28 +43,31 @@ Sadece ve sadece geçerli bir JSON objesi döndür. Markdown etiketleri (```json
 # ---------------------------------------------------------------------------
 # 2. KULLANICI PROMPT ŞABLONU (USER PROMPT TEMPLATE)
 # ---------------------------------------------------------------------------
-# Kullanıcının belirlediği konu ve konsepte göre Gemini'ye gönderilecek dinamik mesaj şablonu.
+# Kullanıcının belirlediği konu ve konsepte göre modele gönderilecek dinamik mesaj şablonu.
 USER_SCRIPT_PROMPT_TEMPLATE = """
 KONU: {topic}
 HEDEF KİTLE VE ANLATIM KONSEPTİ: {style_preset}
 
-Lütfen sistem talimatlarına tam olarak uyarak, aşağıdaki şemaya uygun bir JSON senaryosu üret:
+Lütfen bu konu hakkında uydurma olmayan, %100 gerçek tarihi ve teknik bilgilere dayanan 5 sahnelik bir belgesel senaryosu üret.
+Her sahnenin 'ai_image_prompt' açıklaması, o sahnenin Türkçe metniyle birebir örtüşmeli ve ana konuyu (treni/demiryolunu/mekanı) net biçimde betimlemelidir:
 
 {{
-  "title": "YouTube Video Başlığı (Tıklama oranı yüksek, merak uyandırıcı, max 60 karakter)",
-  "description": "YouTube Video Açıklaması ve popüler etiketler (Örn: #shorts #viral #bilgi)",
+  "title": "YouTube Video Başlığı (Konuyu net anlatan, merak uyandırıcı Türkçe başlık, max 60 karakter)",
+  "description": "Videoda anlatılan gerçek bilgilerin 2 cümlelik özeti ve etiketler (#shorts #belgesel #tren #tarih)",
+  "global_style": "Award-winning historical documentary photography, shot on 35mm ARRI Alexa, natural volumetric lighting, ultra-detailed realistic textures, 8k, vertical 9:16 aspect ratio, clean frame without logos",
+  "visual_seed": 428571,
   "scenes": [
     {{
       "scene_id": 1,
-      "narration": "Girişteki ilk vurucu cümle...",
-      "stock_search_terms": ["cinematic keyword1", "keyword2"],
-      "ai_image_prompt": "Cinematic shot of..., 8k resolution, photorealistic, 9:16 aspect ratio"
+      "narration": "Konunun en çarpıcı gerçek tarihi veya mühendislik bilgisini veren güçlü giriş cümlesi.",
+      "stock_search_terms": ["specific train keyword", "railway history"],
+      "ai_image_prompt": "Wide cinematic vertical shot of the exact train/railway described in narration, realistic historical setting, steam and rails clearly visible"
     }},
     {{
       "scene_id": 2,
-      "narration": "Gelişme cümlesi...",
-      "stock_search_terms": ["action keyword1", "keyword2"],
-      "ai_image_prompt": "Dramatic close up of..., detailed texture, 9:16"
+      "narration": "Yapım yılı, güzergahı veya teknik rekorunu anlatan somut ikinci cümle.",
+      "stock_search_terms": ["locomotive engineering", "railway bridge"],
+      "ai_image_prompt": "Detailed vertical shot showing the specific route, station, or locomotive engineering described in scene 2 narration"
     }}
   ]
 }}

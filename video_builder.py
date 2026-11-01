@@ -281,13 +281,66 @@ def create_fallback_clip(duration: float, scene_id: int):
 # 3. MOVIEPY İLE MONTAJ VE RENDER
 # ---------------------------------------------------------------------------
 
-def build_final_video(scenes: List[Dict[str, Any]], output_video_path: str = "final_output.mp4") -> str:
+def build_final_video(
+    scenes: List[Dict[str, Any]],
+    output_video_path: str = "final_output.mp4",
+    global_style: str = "cinematic documentary photography, 35mm lens, dramatic volumetric lighting, 8k, vertical 9:16",
+    visual_seed: int = 428571,
+    use_ai_generation: bool = True
+) -> str:
     """
-    Tüm sahnelerdeki videoları ses sürelerine göre ayarlar,
-    dikey Shorts (1080x1920) formatında birleştirir ve MP4 render eder.
+    Yeni Mimari:
+    - use_ai_generation=True (varsayılan) olduğunda Pixabay stok videoları yerine
+      ai_visual_generator.py (Flux 9:16 / Fal.ai Video) ve ffmpeg_renderer.py (yerel FFmpeg zoompan + .ass altyazı)
+      motorlarını kullanarak düşük RAM ve yüksek hızla %100 yapay zeka videosu üretir.
     """
+    if use_ai_generation:
+        import shutil
+        from ai_visual_generator import generate_visual_for_scene
+        from ffmpeg_renderer import render_full_project_ffmpeg
+
+        print("\n" + "=" * 60)
+        print("🤖 %100 YAPAY ZEKA GÖRSEL/VİDEO + FFMPEG ZOOMPAN MOTORU BAŞLATILDI")
+        print("=" * 60)
+
+        temp_job_dir = os.path.abspath("temp_ai_build")
+        visuals_dir = os.path.join(temp_job_dir, "visuals")
+        os.makedirs(visuals_dir, exist_ok=True)
+
+        valid_scenes = []
+        for idx, scene in enumerate(scenes):
+            scene_id = scene.get("scene_id", idx + 1)
+            audio_path = scene.get("audio_file_path", "")
+            if not audio_path or not os.path.exists(audio_path):
+                continue
+            print(f"\n[AI Sahne {scene_id}] Görsel/Video üretiliyor (Seed: {visual_seed})...")
+            generate_visual_for_scene(
+                scene=scene,
+                global_style=global_style,
+                visual_seed=visual_seed,
+                output_dir=visuals_dir,
+                prefer_ai_video=True
+            )
+            valid_scenes.append(scene)
+
+        if not valid_scenes:
+            print("[HATA] İşlenecek geçerli sahne bulunamadı!")
+            return ""
+
+        rendered_temp = render_full_project_ffmpeg(
+            scenes=valid_scenes,
+            output_dir=temp_job_dir,
+            final_video_name="rendered_out.mp4",
+            burn_subtitles=True
+        )
+        if rendered_temp and os.path.exists(rendered_temp):
+            shutil.copy2(rendered_temp, output_video_path)
+            size_mb = os.path.getsize(output_video_path) / (1024 * 1024)
+            print(f"\n✅ Final AI videosu başarıyla oluşturuldu: {output_video_path} ({size_mb:.2f} MB)")
+            return output_video_path
+
     print("\n" + "=" * 60)
-    print("🎬 VİDEO VE SES MONTAJ SÜRECİ BAŞLATILDI")
+    print("🎬 VİDEO VE SES MONTAJ SÜRECİ BAŞLATILDI (STOK YEDEK)")
     print("=" * 60)
 
     video_clips = []

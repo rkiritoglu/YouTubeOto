@@ -143,6 +143,8 @@ def get_mock_script(topic: str) -> Dict[str, Any]:
     return {
         "title": f"{topic}: Bilinmeyen Gizemler!",
         "description": f"{topic} hakkında duymadığınız en şaşırtıcı detaylar ve gerçekler! #shorts #viral #raylisistemler #trenler #tarih",
+        "global_style": "cinematic historical documentary photography, shot on 35mm lens, dramatic volumetric fog and lighting, consistent warm brass and dark steel color palette, 8k photorealistic, vertical 9:16",
+        "visual_seed": 428571,
         "scenes": [
             {
                 "scene_id": 1,
@@ -181,6 +183,7 @@ def get_mock_script(topic: str) -> Dict[str, Any]:
 def create_youtube_script(topic: str, style_preset: str = "documentary_history") -> Dict[str, Any]:
     """
     Belirtilen konu için önce Groq (Llama 3), sonra Gemini, en son yerel arşivden senaryo üretir.
+    Global stil şablonu ve sabit visual_seed ile sahneler arası görsel tutarlılığı garanti altına alır.
     """
     print(f"\n[Senaryo Motoru] '{topic}' konusu için dikey senaryo üretiliyor...")
 
@@ -199,14 +202,23 @@ def create_youtube_script(topic: str, style_preset: str = "documentary_history")
         print("[BİLGİ] Kesintisiz akış için yerleşik senaryo şablonu kullanılıyor.")
         script_data = get_mock_script(topic)
 
-    # Her sahne için görsel promptlarını zenginleştir
-    for scene in script_data.get("scenes", []):
-        raw_ai_prompt = scene.get("ai_image_prompt", "")
-        if raw_ai_prompt:
-            scene["ai_image_prompt_enhanced"] = enrich_image_prompt(
-                raw_ai_prompt,
-                style_key=style_preset
-            )
+    # Global stil ve sabit tohum (seed) kontrolü (Darboğaz 4: Style Drift Koruması)
+    from prompts import IMAGE_STYLE_PRESETS
+    default_global_style = IMAGE_STYLE_PRESETS.get(style_preset, IMAGE_STYLE_PRESETS["cinematic_dark"])
+    global_style = script_data.get("global_style") or default_global_style
+    script_data["global_style"] = global_style
+
+    if not script_data.get("visual_seed"):
+        # Konu metninden deterministik bir seed üret (aynı konuda tüm sahneler tutarlı olsun)
+        script_data["visual_seed"] = abs(hash(topic)) % 900000 + 100000
+
+    # Her sahne için global_style + sahne promptunu birleştir
+    for idx, scene in enumerate(script_data.get("scenes", [])):
+        if "scene_id" not in scene:
+            scene["scene_id"] = idx + 1
+        raw_ai_prompt = scene.get("ai_image_prompt") or scene.get("visual_prompt") or f"Cinematic scene of {topic}"
+        scene["ai_image_prompt"] = raw_ai_prompt
+        scene["ai_image_prompt_enhanced"] = f"{global_style}, {raw_ai_prompt}, vertical 9:16 aspect ratio, no text, no watermark"
 
     return script_data
 

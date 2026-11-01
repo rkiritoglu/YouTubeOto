@@ -1,0 +1,8 @@
+[general]
+email = ""
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+fastReruns = true
