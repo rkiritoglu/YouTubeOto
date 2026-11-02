@@ -331,7 +331,7 @@ def build_final_video(
             scenes=valid_scenes,
             output_dir=temp_job_dir,
             final_video_name="rendered_out.mp4",
-            burn_subtitles=True
+            burn_subtitles=False
         )
         if rendered_temp and os.path.exists(rendered_temp):
             shutil.copy2(rendered_temp, output_video_path)

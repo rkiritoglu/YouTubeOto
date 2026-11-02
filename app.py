@@ -14,15 +14,30 @@ Mimari Özellikler:
 
 import os
 import json
+import importlib
 import streamlit as st
 from dotenv import load_dotenv, set_key
 
-from job_queue import init_db, create_job, list_jobs, update_job_progress
+import audio_generator
+import subtitle_generator
+import job_queue
+if not hasattr(audio_generator, "VOICE_PROFILES"):
+    importlib.reload(audio_generator)
+if not hasattr(subtitle_generator, "OVERLAY_TEXT_STYLES"):
+    importlib.reload(subtitle_generator)
+if not hasattr(job_queue, "delete_job_and_files"):
+    importlib.reload(job_queue)
+
+from job_queue import init_db, create_job, list_jobs, update_job_progress, delete_job_and_files
 from worker import spawn_worker_for_job
 from generate_script import create_youtube_script
 from daily_runner import load_past_topics, generate_autonomous_railway_topic
 from youtube_uploader import upload_video_to_youtube
 from prompts import IMAGE_STYLE_PRESETS
+from audio_generator import VOICE_PROFILES, generate_audio_for_scene
+from subtitle_generator import OVERLAY_TEXT_STYLES
+from ai_visual_generator import generate_visual_for_scene
+from ffmpeg_renderer import render_full_project_ffmpeg
 
 load_dotenv()
 init_db()
@@ -88,21 +103,113 @@ with st.sidebar:
     st.write(f"- **YouTube OAuth:** {'✅ Hazır' if yt_ok else '⚠️ client_secret.json Bekleniyor'}")
 
     st.divider()
-    st.subheader("⚙️ Üretim Tercihleri")
+    st.subheader("⚙️ Görsel Üretim Tercihleri")
+    use_web_reference = st.toggle(
+        "🌐 İnternetten Referans Resim Bul & Telifsiz Benzerini Üret",
+        value=True,
+        help="Açık olduğunda her sahne için internetten (Wikimedia / Bing) gerçek fotoğraf bulur, Qwen 3.8 Vision ile analiz eder ve FLUX.1-schnell ile ona çok benzeyen %100 telifsiz yeni görsel üretir."
+    )
     prefer_ai_video = st.toggle(
         "Hareketli AI Video Önceliği (Fal.ai)",
         value=True,
         help="FAL_KEY varsa sahneleri doğrudan hareketli AI video olarak üretir; yoksa otomatik Flux 9:16 + FFmpeg Ken Burns kullanır."
     )
-    burn_subtitles = st.toggle(
-        "Dinamik Kelime Vurgulu .ASS Altyazı",
-        value=True,
-        help="FFmpeg 'ass' filtresiyle kelime kelime vurgulanan Shorts altyazısını tek geçişte videoya yakar."
-    )
+
+    st.divider()
+    st.subheader("🎙️ Seslendirme (TTS) Alternatifleri")
+    voice_keys = list(VOICE_PROFILES.keys())
     edge_voice = st.selectbox(
-        "Türkçe Seslendirmen (Edge-TTS)",
-        options=["tr-TR-AhmetNeural", "tr-TR-EmelNeural"],
+        "Seslendirmen & Tonlama Profili",
+        options=voice_keys,
+        format_func=lambda k: VOICE_PROFILES[k]["label"],
         index=0
+    )
+    if st.button("🔊 Seçili Sesi Dinle (Önizleme)", width="stretch"):
+        os.makedirs("temp_audio", exist_ok=True)
+        preview_mp3 = os.path.join("temp_audio", f"preview_{edge_voice}.mp3")
+        sample_txt = "Bin sekiz yüz seksen üç yılında Doğu Ekspresi üç bin kilometrelik efsanevi yolculuğuna başladı."
+        with st.spinner("Örnek ses üretiliyor..."):
+            p_path, _, _ = generate_audio_for_scene(sample_txt, preview_mp3, edge_voice=edge_voice)
+            if p_path and os.path.exists(p_path):
+                st.audio(p_path, format="audio/mp3")
+
+    st.divider()
+    st.subheader("🏷️ Video Üst Katman & Yazı Stilleri")
+    style_preset_keys = list(OVERLAY_TEXT_STYLES.keys())
+    text_style_preset = st.selectbox(
+        "🎨 Yazı & Bant Stili",
+        options=style_preset_keys,
+        format_func=lambda k: OVERLAY_TEXT_STYLES[k]["label"],
+        index=0
+    )
+    show_top_banner = st.toggle(
+        "🏷️ Video Üst Katman Başlığı (Üst Bant)",
+        value=True,
+        help="Açık olduğunda videonun üst kısmına seçilen yazı stilinde konu/başlık bandı yerleştirir."
+    )
+    top_banner_text = ""
+    if show_top_banner:
+        top_banner_text = st.text_input(
+            "✏️ Özel Üst Başlık (Boşsa Otomatik Başlık)",
+            value="",
+            placeholder="Örn: DOĞU EKSPRESİ'NİN GİZEMİ"
+        )
+    burn_subtitles = st.toggle(
+        "💬 Alt Konuşma Altyazısı (.ASS)",
+        value=False,
+        help="Açık olduğunda videonun alt kısmına kelime kelime vurgulanan konuşma altyazısını yakar (Varsayılan: Kapalı)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# STÜDYO AÇILIŞINDA OTOMATİK 1 ADET VİDEO ÜRETİMİ (Otonom Başlangıç)
+# ---------------------------------------------------------------------------
+@st.cache_resource
+def _auto_start_initial_video_on_launch():
+    """
+    Streamlit stüdyosu başlatıldığında (sunucu başına 1 kez) otomatik olarak
+    daha önce işlenmemiş yeni bir konu seçer ve 1 adet videoyu arka planda üretime alır.
+    """
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx() is None:
+            return None
+    except Exception:
+        pass
+
+    active = [j for j in list_jobs(limit=10) if j.get("status") in ("queued", "running")]
+    if active:
+        return {"job_id": active[0]["job_id"], "topic": active[0]["topic"], "already_running": True}
+
+    past = load_past_topics()
+    suggestion = generate_autonomous_railway_topic(past)
+    auto_topic = suggestion.get("topic", "Orient Express: Doğu Ekspresi'nin Çözülemeyen Gizemleri")
+    auto_style = suggestion.get("style", "documentary_history")
+
+    job_id = create_job(
+        topic=auto_topic,
+        style_preset=auto_style,
+        script_data=None,
+        options={
+            "prefer_ai_video": True,
+            "burn_subtitles": False,
+            "show_top_banner": True,
+            "top_banner_text": "",
+            "text_style_preset": "gold_banner",
+            "use_web_reference": True,
+            "edge_voice": "belgesel_tok_erkek"
+        }
+    )
+    spawn_worker_for_job(job_id)
+    return {"job_id": job_id, "topic": auto_topic, "style": auto_style, "already_running": False}
+
+
+_auto_launch_info = _auto_start_initial_video_on_launch()
+if _auto_launch_info:
+    st.info(
+        f"🚀 **Otonom Başlangıç Aktif:** Stüdyo başlatıldığı için **\"{_auto_launch_info['topic']}\"** "
+        f"konulu 1 adet video arka planda otomatik üretime alındı (`{_auto_launch_info['job_id']}`). "
+        f"Durumu **⚡ 2. Canlı İş Kuyruğu** sekmesinden canlı takip edebilirsiniz."
     )
 
 
@@ -187,6 +294,10 @@ with tab_studio:
                 options={
                     "prefer_ai_video": prefer_ai_video,
                     "burn_subtitles": burn_subtitles,
+                    "show_top_banner": show_top_banner,
+                    "top_banner_text": top_banner_text,
+                    "text_style_preset": text_style_preset,
+                    "use_web_reference": use_web_reference,
                     "edge_voice": edge_voice
                 }
             )
@@ -220,22 +331,182 @@ with tab_studio:
                 height=90
             )
 
-        st.markdown("#### 🎞️ Sahneler (Metin ve AI Çizim Promptları)")
+        st.markdown("#### 🎞️ Sahneler (Metin, Telifsiz AI Görsel Kontrolü ve Kendi Videolarınız)")
+        st.caption(
+            "💡 **İpucu:** Videoyu birleştirmeden önce **tüm sahnelerin veya tek bir sahnenin telifsiz AI resmini üretip kontrol edebilir**, "
+            "beğenmediğiniz resmi yeni varyasyonla değiştirebilir veya yerine kendi videonuzu/fotoğrafınızı koyabilirsiniz."
+        )
+        draft_preview_dir = os.path.abspath(os.path.join("temp_visuals", "draft_preview"))
+        os.makedirs(draft_preview_dir, exist_ok=True)
+
+        if st.button("🖼️ Adım 2 (Önerilen): Tüm Sahnelerin Telifsiz Resimlerini Şimdi Üret & Kontrol Et", width="stretch"):
+            scenes_to_gen = draft.get("scenes", [])
+            g_style = draft.get("global_style", "")
+            v_seed = int(draft.get("visual_seed", 428571))
+            prog_bar = st.progress(0, text="Sahnelerin telifsiz AI görselleri üretiliyor...")
+            for idx_g, sc_g in enumerate(scenes_to_gen):
+                sid_g = sc_g.get("scene_id", idx_g + 1)
+                if sc_g.get("custom_media_path") and os.path.exists(str(sc_g.get("custom_media_path"))):
+                    continue
+                prog_bar.progress(
+                    int(((idx_g) / max(1, len(scenes_to_gen))) * 100),
+                    text=f"Sahne {sid_g}/{len(scenes_to_gen)}: Referans resim aranıyor ve telifsiz AI görseli üretiliyor..."
+                )
+                generate_visual_for_scene(
+                    scene=sc_g,
+                    global_style=g_style,
+                    visual_seed=v_seed + int(sc_g.get("variation_offset", 0)),
+                    output_dir=draft_preview_dir,
+                    prefer_ai_video=False,
+                    use_web_reference=use_web_reference,
+                    topic=st.session_state["topic_input"]
+                )
+            prog_bar.progress(100, text="✅ Tüm sahnelerin telifsiz görselleri hazır! Aşağıdan inceleyip değiştirebilirsiniz.")
+
+        custom_media_dir = os.path.abspath("custom_media")
+        os.makedirs(custom_media_dir, exist_ok=True)
+        ALLOWED_CUSTOM_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".jpg", ".jpeg", ".png", ".webp")
+        existing_custom_files = sorted([
+            f for f in os.listdir(custom_media_dir)
+            if f.lower().endswith(ALLOWED_CUSTOM_EXTS)
+        ])
+
         scenes_list = draft.get("scenes", [])
         for idx, sc in enumerate(scenes_list):
             sid = sc.get("scene_id", idx + 1)
-            with st.expander(f"Sahne {sid}: {sc.get('narration', '')[:65]}...", expanded=(idx == 0)):
-                sc["narration"] = st.text_input(
-                    f"🎙️ Sahne {sid} Türkçe Seslendirme Metni",
-                    value=sc.get("narration", ""),
-                    key=f"nar_{sid}_{idx}"
-                )
-                sc["ai_image_prompt"] = st.text_area(
-                    f"🖌️ Sahne {sid} Yapay Zeka Görsel/Video Komutu (İngilizce)",
-                    value=sc.get("ai_image_prompt", ""),
-                    height=68,
-                    key=f"prm_{sid}_{idx}"
-                )
+            has_custom = bool(sc.get("custom_media_path") and os.path.exists(str(sc.get("custom_media_path"))))
+            has_generated = bool(sc.get("visual_file_path") and os.path.exists(str(sc.get("visual_file_path"))))
+            if has_custom:
+                badge = "📹 [Kendi Videonuz/Görseliniz Seçili]"
+            elif has_generated:
+                badge = "✅ [Telifsiz AI Görseli Hazır - Onaylandı]"
+            else:
+                badge = "🤖 [AI Üretecek]"
+            with st.expander(f"Sahne {sid} {badge}: {sc.get('narration', '')[:60]}...", expanded=(idx == 0 or has_generated)):
+                nar_col1, nar_col2 = st.columns([2.4, 1.0])
+                with nar_col1:
+                    sc["narration"] = st.text_area(
+                        f"🎙️ Sahne {sid} Türkçe Konuşma Metni (İstediğiniz gibi düzeltebilirsiniz)",
+                        value=sc.get("narration", ""),
+                        height=68,
+                        key=f"nar_{sid}_{idx}"
+                    )
+                with nar_col2:
+                    st.write("")
+                    if st.button(f"🔊 Sahne {sid} Sesini Dinle", key=f"tts_prev_{sid}_{idx}", width="stretch"):
+                        os.makedirs("temp_audio", exist_ok=True)
+                        sc_prev_mp3 = os.path.join("temp_audio", f"draft_s{sid}_preview.mp3")
+                        with st.spinner("Seslendiriliyor..."):
+                            p_mp3, p_dur, _ = generate_audio_for_scene(sc["narration"], sc_prev_mp3, edge_voice=edge_voice)
+                            if p_mp3 and os.path.exists(p_mp3):
+                                st.audio(p_mp3, format="audio/mp3")
+                                st.caption(f"Süre: {p_dur:.1f} sn")
+
+                st.markdown("##### 📹 Bu Sahneye Kendi Videonuzu / Görselinizi Yerleştirin (İsteğe Bağlı)")
+                cm_col1, cm_col2 = st.columns([1.3, 1.2])
+                with cm_col1:
+                    uploaded_file = st.file_uploader(
+                        f"Sahne {sid} için Bilgisayardan Dosya Yükle (Sürükle & Bırak)",
+                        type=["mp4", "mov", "mkv", "webm", "jpg", "jpeg", "png", "webp"],
+                        key=f"upl_{sid}_{idx}"
+                    )
+                    if uploaded_file is not None:
+                        safe_fname = f"scene{sid}_{uploaded_file.name}"
+                        saved_custom_path = os.path.join(custom_media_dir, safe_fname)
+                        with open(saved_custom_path, "wb") as out_f:
+                            out_f.write(uploaded_file.getbuffer())
+                        sc["custom_media_path"] = saved_custom_path
+                        if safe_fname not in existing_custom_files:
+                            existing_custom_files.append(safe_fname)
+
+                with cm_col2:
+                    folder_options = ["🤖 Yapay Zeka Üretsin (Özel Dosya Yok)"] + existing_custom_files
+                    current_custom = str(sc.get("custom_media_path") or "")
+                    current_bname = os.path.basename(current_custom) if current_custom else ""
+                    default_idx = folder_options.index(current_bname) if current_bname in folder_options else 0
+
+                    selected_folder_item = st.selectbox(
+                        f"📁 Veya 'custom_media/' Klasöründen Seç (Sahne {sid})",
+                        options=folder_options,
+                        index=default_idx,
+                        key=f"sel_cm_{sid}_{idx}"
+                    )
+                    if uploaded_file is None:
+                        if selected_folder_item == folder_options[0]:
+                            sc["custom_media_path"] = ""
+                        else:
+                            sc["custom_media_path"] = os.path.join(custom_media_dir, selected_folder_item)
+
+                if sc.get("custom_media_path") and os.path.exists(str(sc["custom_media_path"])):
+                    st.success(f"✅ Bu sahnede kendi dosyanız kullanılacak: `{os.path.basename(sc['custom_media_path'])}`")
+                    opt_c1, opt_c2, opt_c3 = st.columns([1.5, 1.2, 0.9])
+                    with opt_c1:
+                        fit_options = {
+                            "crop": "📱 Tam Ekran Dikey Kırpma (9:16 Center Crop)",
+                            "blur_pad": "🖼️ Bulanık Arka Planlı Tam Sığdırma (Yatay Videolar Kesilmez)"
+                        }
+                        cur_fit = sc.get("custom_fit_mode", "crop")
+                        sc["custom_fit_mode"] = st.selectbox(
+                            "Kadraj / Sığdırma Modu",
+                            options=list(fit_options.keys()),
+                            format_func=lambda k: fit_options[k],
+                            index=0 if cur_fit == "crop" else 1,
+                            key=f"fit_{sid}_{idx}"
+                        )
+                    with opt_c2:
+                        sc["custom_ambient_audio"] = st.toggle(
+                            "🔉 Videonun Orijinal Sesini %15 Ortam Sesi Olarak Arkada Bırak",
+                            value=bool(sc.get("custom_ambient_audio", False)),
+                            help="Kapalıysa videonuzun sesi tamamen susturulur, sadece Türkçe anlatıcı duyulur. Açıksa kendi videonuzun sesi %15 kısık ambiyans olarak arkada duyulur.",
+                            key=f"amb_{sid}_{idx}"
+                        )
+                    with opt_c3:
+                        sc["custom_start_sec"] = float(
+                            st.number_input(
+                                "⏱️ Başlangıç (sn)",
+                                min_value=0.0,
+                                value=float(sc.get("custom_start_sec", 0.0)),
+                                step=0.5,
+                                help="Videonuzun kaçıncı saniyesinden itibaren kullanılacağını seçin.",
+                                key=f"start_{sid}_{idx}"
+                            )
+                        )
+                else:
+                    sc["ai_image_prompt"] = st.text_area(
+                        f"🖌️ Sahne {sid} Yapay Zeka Görsel/Video Komutu (İngilizce)",
+                        value=sc.get("ai_image_prompt", ""),
+                        height=68,
+                        key=f"prm_{sid}_{idx}"
+                    )
+
+                    btn_lbl = (
+                        f"🔄 Sahne {sid} Telifsiz Resmini Değiştir / Yeni Resim Üret"
+                        if (sc.get("visual_file_path") and os.path.exists(str(sc.get("visual_file_path"))))
+                        else f"🎨 Sahne {sid} Telifsiz Resmini Şimdi Üret & Önizle"
+                    )
+                    if st.button(btn_lbl, key=f"gen_single_{sid}_{idx}", width="stretch"):
+                        sc["variation_offset"] = int(sc.get("variation_offset", 0)) + 137
+                        terms = list(sc.get("stock_search_terms") or [])
+                        if len(terms) > 1:
+                            sc["stock_search_terms"] = terms[1:] + terms[:1]
+                        with st.spinner(f"Sahne {sid} için telifsiz yeni AI görseli üretiliyor..."):
+                            out_sub = os.path.join(draft_preview_dir, f"s{sid}_v{sc['variation_offset']}")
+                            os.makedirs(out_sub, exist_ok=True)
+                            generate_visual_for_scene(
+                                scene=sc,
+                                global_style=draft.get("global_style", ""),
+                                visual_seed=int(draft.get("visual_seed", 428571)) + int(sc["variation_offset"]),
+                                output_dir=out_sub,
+                                prefer_ai_video=False,
+                                use_web_reference=use_web_reference,
+                                topic=st.session_state["topic_input"]
+                            )
+                            st.rerun()
+
+                    # Sadece üretilen telifsiz görseli göster
+                    v_file = str(sc.get("visual_file_path") or "")
+                    if v_file and os.path.exists(v_file):
+                        st.image(v_file, caption=f"✅ Üretilen Telifsiz AI Görsel (Sahne {sid})", width=260)
 
         if st.button("🎬 Bu Düzenlenmiş Senaryoyu Arka Planda Üret (Worker Başlat)", type="primary", width="stretch"):
             job_id = create_job(
@@ -245,6 +516,10 @@ with tab_studio:
                 options={
                     "prefer_ai_video": prefer_ai_video,
                     "burn_subtitles": burn_subtitles,
+                    "show_top_banner": show_top_banner,
+                    "top_banner_text": top_banner_text,
+                    "text_style_preset": text_style_preset,
+                    "use_web_reference": use_web_reference,
                     "edge_voice": edge_voice
                 }
             )
@@ -324,7 +599,7 @@ def render_live_job_queue():
                         v_path = sc["visual_file_path"]
                         with cols[idx % len(cols)]:
                             if sc.get("visual_type") == "image":
-                                st.image(v_path, caption=f"Sahne {sc.get('scene_id')} ({sc.get('duration_sec', 0):.1f}sn)", width="stretch")
+                                st.image(v_path, caption=f"✨ Telifsiz AI Sahne {sc.get('scene_id')} ({sc.get('duration_sec', 0):.1f}sn)", width="stretch")
                             else:
                                 st.video(v_path)
 
@@ -340,9 +615,18 @@ with tab_queue:
 with tab_gallery:
     st.subheader("📁 Tamamlanan Videolar Galerisi (`output/` Klasörü)")
     st.caption(
-        "Mimari Darboğaz 5 Çözümü: Videolar önce yerel `output/<job_id>/` klasörüne `.mp4` ve `metadata.json` "
-        "olarak kaydedilir. Önizledikten sonra bilgisayarınıza indirebilir veya istediğiniz an YouTube'a yükleyebilirsiniz."
+        "Videolar önce yerel `output/<job_id>/` klasörüne kaydedilir. "
+        "**YouTube'a yüklendiği anda yerel dosyaları otomatik olarak silinir ve bu galeriden kaldırılır.**"
     )
+
+    if st.session_state.get("last_yt_upload_notice"):
+        st.success(st.session_state.pop("last_yt_upload_notice"))
+
+    # Daha önce YouTube'a yüklenmiş olan işlerin yerel dosyalarını ve galeri kaydını otomatik temizle
+    for _j in list_jobs(limit=50):
+        _yt = str(_j.get("youtube_video_id") or "").strip()
+        if _yt and _yt != "SIMULATED_VIDEO_ID_SUCCESS":
+            delete_job_and_files(_j["job_id"])
 
     completed_jobs = [
         j for j in list_jobs(limit=30)
@@ -350,7 +634,7 @@ with tab_gallery:
     ]
 
     if not completed_jobs:
-        st.info("Henüz tamamlanmış bir video bulunmuyor. 1. Sekmeden yeni bir üretim başlatabilirsiniz.")
+        st.info("Henüz galeride bekleyen bir video bulunmuyor. 1. Sekmeden yeni bir üretim başlatabilirsiniz.")
     else:
         for job in completed_jobs:
             jid = job["job_id"]
@@ -406,41 +690,184 @@ with tab_gallery:
                                 key=f"dl_mp4_{jid}"
                             )
                     with b_col2:
-                        if m_path and os.path.exists(m_path):
-                            with open(m_path, "rb") as mf:
-                                st.download_button(
-                                    label="📄 metadata.json İndir",
-                                    data=mf,
-                                    file_name=f"{jid}_metadata.json",
-                                    mime="application/json",
-                                    width="stretch",
-                                    key=f"dl_meta_{jid}"
-                                )
-                    with b_col3:
-                        yt_id = job.get("youtube_video_id") or meta.get("youtube_video_id")
-                        if yt_id and yt_id != "SIMULATED_VIDEO_ID_SUCCESS":
-                            st.success(f"🔗 [YouTube'da İzle](https://youtu.be/{yt_id})")
-                        else:
-                            if st.button("📤 YouTube Kanalına Yükle", type="primary", width="stretch", key=f"up_btn_{jid}"):
-                                with st.spinner("İzole YouTube yükleyici (youtube_uploader.py) çalıştırılıyor..."):
-                                    try:
-                                        uploaded_id = upload_video_to_youtube(
-                                            video_file=v_path,
-                                            title=up_title,
-                                            description=up_desc,
-                                            tags=meta.get("tags", ["shorts", "viral", "ai"]),
-                                            privacy_status=up_privacy
+                        if st.button("📤 YouTube Kanalına Yükle", type="primary", width="stretch", key=f"up_btn_{jid}"):
+                            with st.spinner("İzole YouTube yükleyici (youtube_uploader.py) çalıştırılıyor..."):
+                                try:
+                                    uploaded_id = upload_video_to_youtube(
+                                        video_file=v_path,
+                                        title=up_title,
+                                        description=up_desc,
+                                        tags=meta.get("tags", ["shorts", "viral", "ai"]),
+                                        privacy_status=up_privacy
+                                    )
+                                    if uploaded_id and uploaded_id != "SIMULATED_VIDEO_ID_SUCCESS":
+                                        delete_job_and_files(jid)
+                                        st.session_state["last_yt_upload_notice"] = (
+                                            f"🎉 Video başarıyla YouTube'a yüklendi (https://youtu.be/{uploaded_id})! "
+                                            f"Yerel dosyaları (`output/{jid}/`) silindi ve galeriden kaldırıldı."
                                         )
-                                        if uploaded_id:
-                                            update_job_progress(jid, youtube_video_id=uploaded_id)
-                                            meta["youtube_video_id"] = uploaded_id
+                                        st.rerun()
+                                    elif uploaded_id == "SIMULATED_VIDEO_ID_SUCCESS":
+                                        st.warning("⚠️ `client_secret.json` bulunamadığı için simülasyon çalıştı; gerçek yükleme yapılmadığından yerel dosyalar korundu.")
+                                except Exception as e:
+                                    st.error(f"YouTube yükleme hatası (Videonuz output/ klasöründe güvende): {e}")
+                    with b_col3:
+                        if st.button("🗑️ Yerel Dosyaları Sil", width="stretch", key=f"del_btn_{jid}"):
+                            delete_job_and_files(jid)
+                            st.session_state["last_yt_upload_notice"] = f"🗑️ `{jid}` kodlu videonun tüm yerel dosyaları silindi ve galeriden kaldırıldı."
+                            st.rerun()
+
+                # Tamamlanan videonun sahne konuşma metinlerini ve resimlerini kontrol etme, değiştirme ve hızlı yeniden birleştirme
+                gallery_scenes = meta.get("scenes") or (job.get("script_data") or {}).get("scenes") or []
+                if gallery_scenes:
+                    with st.expander(f"✏️ Sahnelerin Konuşma Metinlerini & Telifsiz Resimlerini Düzenle ({len(gallery_scenes)} Sahne)", expanded=False):
+                        st.caption(
+                            "Herhangi bir sahnenin **Türkçe konuşma metnini düzeltebilir**, **telifsiz resmini değiştirebilir** "
+                            "veya **bilgisayarınızdan resim/video yükleyip** videoyu birkaç saniyede güncelleyebilirsiniz."
+                        )
+                        job_out_dir = job.get("output_dir") or os.path.dirname(v_path)
+                        job_vis_dir = os.path.join(job_out_dir, "visuals")
+                        job_aud_dir = os.path.join(job_out_dir, "audio")
+                        os.makedirs(job_vis_dir, exist_ok=True)
+                        os.makedirs(job_aud_dir, exist_ok=True)
+                        opts = job.get("options") or {}
+                        job_voice = str(opts.get("edge_voice") or edge_voice)
+
+                        for g_idx, g_sc in enumerate(gallery_scenes):
+                            g_sid = g_sc.get("scene_id", g_idx + 1)
+                            g_vpath = str(g_sc.get("visual_file_path") or "")
+                            g_apath = str(g_sc.get("audio_file_path") or "")
+                            st.markdown(f"#### 🎞️ Sahne {g_sid}")
+                            gc1, gc2 = st.columns([1.2, 2.2])
+                            with gc1:
+                                if g_vpath and os.path.exists(g_vpath):
+                                    if g_sc.get("visual_type") == "video":
+                                        st.video(g_vpath)
+                                    else:
+                                        st.image(g_vpath, caption=f"✅ Telifsiz Görsel {g_sid}", width=210)
+                                if g_apath and os.path.exists(g_apath):
+                                    st.audio(g_apath, format="audio/mp3")
+                            with gc2:
+                                old_nar = str(g_sc.get("narration") or "")
+                                new_nar = st.text_area(
+                                    f"🎙️ Sahne {g_sid} Türkçe Konuşma Metni",
+                                    value=old_nar,
+                                    height=68,
+                                    key=f"gal_nar_{jid}_{g_sid}"
+                                )
+                                if new_nar.strip() != old_nar.strip():
+                                    g_sc["_narration_dirty"] = True
+                                g_sc["narration"] = new_nar
+
+                                if st.button(f"🎙️ Sahne {g_sid} Konuşma Metnini Kaydet & Sesi Yenile", key=f"gal_revoice_{jid}_{g_sid}", width="stretch"):
+                                    with st.spinner(f"Sahne {g_sid} yeni konuşma metniyle seslendiriliyor..."):
+                                        new_mp3_path = os.path.abspath(os.path.join(job_aud_dir, f"scene_{g_sid}.mp3"))
+                                        saved_a, dur_a, timings_a = generate_audio_for_scene(
+                                            new_nar,
+                                            new_mp3_path,
+                                            edge_voice=job_voice
+                                        )
+                                        if saved_a:
+                                            g_sc["audio_file_path"] = saved_a
+                                            g_sc["duration_sec"] = dur_a
+                                            g_sc["word_timings"] = timings_a
+                                            g_sc.pop("_narration_dirty", None)
+                                            meta["scenes"] = gallery_scenes
+                                            meta["total_duration_sec"] = round(sum(float(s.get("duration_sec", 0.0)) for s in gallery_scenes), 2)
                                             if m_path:
                                                 with open(m_path, "w", encoding="utf-8") as f:
                                                     json.dump(meta, f, ensure_ascii=False, indent=2)
-                                            st.success(f"🎉 Başarıyla yüklendi! Video ID: {uploaded_id}")
+                                            update_job_progress(jid, script_data={"scenes": gallery_scenes, "title": meta.get("title", "")})
                                             st.rerun()
-                                    except Exception as e:
-                                        st.error(f"YouTube yükleme hatası (Videonuz output/ klasöründe güvende): {e}")
+
+                                new_prm = st.text_input(
+                                    f"🖌️ Sahne {g_sid} AI Görsel Komutu (İngilizce)",
+                                    value=g_sc.get("ai_image_prompt", ""),
+                                    key=f"gal_prm_{jid}_{g_sid}"
+                                )
+                                g_sc["ai_image_prompt"] = new_prm
+
+                                if st.button(f"🔄 Sahne {g_sid} Telifsiz Resmini Değiştir / Yeniden Üret", key=f"gal_regen_{jid}_{g_sid}", width="stretch"):
+                                    g_sc["variation_offset"] = int(g_sc.get("variation_offset", 0)) + 173
+                                    terms = list(g_sc.get("stock_search_terms") or [])
+                                    if len(terms) > 1:
+                                        g_sc["stock_search_terms"] = terms[1:] + terms[:1]
+                                    with st.spinner(f"Sahne {g_sid} için yeni telifsiz AI görseli üretiliyor..."):
+                                        sub_vdir = os.path.join(job_vis_dir, f"s{g_sid}_v{g_sc['variation_offset']}")
+                                        os.makedirs(sub_vdir, exist_ok=True)
+                                        generate_visual_for_scene(
+                                            scene=g_sc,
+                                            global_style=meta.get("global_style", ""),
+                                            visual_seed=int(meta.get("visual_seed", 428571)) + int(g_sc["variation_offset"]),
+                                            output_dir=sub_vdir,
+                                            prefer_ai_video=False,
+                                            use_web_reference=use_web_reference,
+                                            topic=job["topic"]
+                                        )
+                                        meta["scenes"] = gallery_scenes
+                                        if m_path:
+                                            with open(m_path, "w", encoding="utf-8") as f:
+                                                json.dump(meta, f, ensure_ascii=False, indent=2)
+                                        update_job_progress(jid, script_data={"scenes": gallery_scenes, "title": meta.get("title", "")})
+                                        st.rerun()
+
+                                rep_up = st.file_uploader(
+                                    f"📁 Veya Sahne {g_sid} İçin Bilgisayardan Resim/Video Yükle",
+                                    type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "webm"],
+                                    key=f"gal_up_{jid}_{g_sid}"
+                                )
+                                if rep_up is not None:
+                                    ext_u = os.path.splitext(rep_up.name)[1].lower()
+                                    rep_dest = os.path.abspath(os.path.join(job_vis_dir, f"scene_{g_sid}_replaced{ext_u}"))
+                                    with open(rep_dest, "wb") as out_u:
+                                        out_u.write(rep_up.getbuffer())
+                                    g_sc["visual_file_path"] = rep_dest
+                                    g_sc["visual_type"] = "video" if ext_u in (".mp4", ".mov", ".webm") else "image"
+                                    meta["scenes"] = gallery_scenes
+                                    if m_path:
+                                        with open(m_path, "w", encoding="utf-8") as f:
+                                            json.dump(meta, f, ensure_ascii=False, indent=2)
+                                    update_job_progress(jid, script_data={"scenes": gallery_scenes, "title": meta.get("title", "")})
+                                    st.success(f"Sahne {g_sid} dosyası güncellendi! Aşağıdaki butonla videoyu yenileyin.")
+                            st.divider()
+
+                        if st.button(f"⚡ Güncellenen Metin ve Resimlerle Videoyu Tekrar Birleştir ({jid})", type="primary", width="stretch", key=f"rerender_{jid}"):
+                            with st.spinner("Değişen konuşma metinleri seslendiriliyor ve FFmpeg ile video yeniden birleştiriliyor..."):
+                                # Eğer konuşma metni değiştirilmiş sahneler varsa önce seslerini otomatik güncelle
+                                for s_item in gallery_scenes:
+                                    s_id_val = s_item.get("scene_id", 1)
+                                    a_file = str(s_item.get("audio_file_path") or "")
+                                    if s_item.get("_narration_dirty") or not a_file or not os.path.exists(a_file):
+                                        target_mp3 = os.path.abspath(os.path.join(job_aud_dir, f"scene_{s_id_val}.mp3"))
+                                        saved_a, dur_a, timings_a = generate_audio_for_scene(
+                                            str(s_item.get("narration") or ""),
+                                            target_mp3,
+                                            edge_voice=job_voice
+                                        )
+                                        if saved_a:
+                                            s_item["audio_file_path"] = saved_a
+                                            s_item["duration_sec"] = dur_a
+                                            s_item["word_timings"] = timings_a
+                                            s_item.pop("_narration_dirty", None)
+
+                                meta["scenes"] = gallery_scenes
+                                meta["total_duration_sec"] = round(sum(float(s.get("duration_sec", 0.0)) for s in gallery_scenes), 2)
+                                if m_path:
+                                    with open(m_path, "w", encoding="utf-8") as f:
+                                        json.dump(meta, f, ensure_ascii=False, indent=2)
+                                update_job_progress(jid, script_data={"scenes": gallery_scenes, "title": meta.get("title", "")})
+
+                                render_full_project_ffmpeg(
+                                    scenes=gallery_scenes,
+                                    output_dir=job_out_dir,
+                                    final_video_name="final_shorts.mp4",
+                                    burn_subtitles=bool(opts.get("burn_subtitles", burn_subtitles)),
+                                    show_top_banner=bool(opts.get("show_top_banner", show_top_banner)),
+                                    top_banner_text=str(opts.get("top_banner_text") or meta.get("title") or job["topic"]),
+                                    text_style_preset=str(opts.get("text_style_preset") or text_style_preset)
+                                )
+                                st.success("✅ Video yeni konuşma metinleri ve sahne görselleriyle başarıyla güncellendi!")
+                                st.rerun()
 
 
 # ===========================================================================

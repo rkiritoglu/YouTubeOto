@@ -212,10 +212,13 @@ def create_youtube_script(topic: str, style_preset: str = "documentary_history")
         # Konu metninden deterministik bir seed üret (aynı konuda tüm sahneler tutarlı olsun)
         script_data["visual_seed"] = abs(hash(topic)) % 900000 + 100000
 
-    # Her sahne için global_style + sahne promptunu birleştir
+    # Her sahne için global_style + sahne promptunu birleştir ve metni TTS için normalize et
+    from audio_generator import normalize_turkish_tts_text
     for idx, scene in enumerate(script_data.get("scenes", [])):
         if "scene_id" not in scene:
             scene["scene_id"] = idx + 1
+        if scene.get("narration"):
+            scene["narration"] = normalize_turkish_tts_text(str(scene["narration"]))
         raw_ai_prompt = scene.get("ai_image_prompt") or scene.get("visual_prompt") or f"Cinematic scene of {topic}"
         scene["ai_image_prompt"] = raw_ai_prompt
         scene["ai_image_prompt_enhanced"] = f"{global_style}, {raw_ai_prompt}, vertical 9:16 aspect ratio, no text, no watermark"

@@ -26,9 +26,12 @@ UYULMASI ZORUNLU KATI KURALLAR:
 1. KESİNLİKLE UYDURMA / SOYUT CÜMLE YAZMA:
    - "Gizli harita kayboldu", "Her kabinde cinayet planı vardı", "Gizli odanın kapısı hâlâ kilitli" gibi uydurma, masalsı ve konuyla alakasız cümleler KESİNLİKLE YASAKTIR!
    - İzleyiciye gerçekten yeni ve doğru bir bilgi ver: Hangi yılda yapıldı? Hangi ülkeleri/şehirleri bağladı? Kaç km uzunluğunda veya kaç km/s hızında? Hangi gerçek tarihi olay yaşandı?
-2. DOĞAL VE AKICI TÜRKÇE ANLATIM:
+2. DOĞAL VE AKICI TÜRKÇE ANLATIM (RAKAM, KISALTMA VE SEMBOL YASAĞI):
    - İlk cümlede (Hook) konunun en çarpıcı gerçek özelliğini söyle.
    - Sahneler birbirinin devamı olan anlamlı bir hikaye/belgesel akışı oluşturmalı (12-18 kelimelik tam, anlamlı ve düzgün Türkçe cümleler kur).
+   - SESLENDİRME METNİNDE ('narration') KESİNLİKLE RAKAM KULLANMA! Tüm sayıları ve tarihleri Türkçe okunuşuyla yazıyla yaz (Örn: '1883' yerine 'bin sekiz yüz seksen üç', '450' yerine 'dört yüz elli', '4014' yerine 'dört bin on dört').
+   - SESLENDİRME METNİNDE KESİNLİKLE KISALTMA KULLANMA! ('km' yerine 'kilometre', 'km/s' yerine 'saatte ... kilometre', 'mm' yerine 'milimetre', 'm' yerine 'metre', 'dk' yerine 'dakika', 'sn' yerine 'saniye', 'kW' yerine 'kilovat', 'vb.' yerine 've benzeri', 'yy.' yerine 'yüzyıl' yaz).
+   - SESLENDİRME METNİNDE KESİNLİKLE MATEMATİKSEL İFADE VEYA SEMBOL KULLANMA! ('%' yerine 'yüzde', 'm³' yerine 'metreküp', 'm²' yerine 'metrekare', '°C' yerine 'santigrat derece', '+' yerine 'artı', '/' yerine 'bölü', ',' veya '.' ondalık yerine 'virgül' yaz).
    - Video açıklaması (description) ile videoda anlatılan metin BİREBİR aynı gerçek bilgileri özetlemeli.
 3. GÖRSEL VE METİN BİREBİR EŞLEŞMESİ (ÇOK ÖNEMLİ):
    - Her sahnenin 'ai_image_prompt' değeri, o sahnedeki Türkçe 'narration' cümlesinde ne anlatılıyorsa TAM OLARAK ONU göstermelidir!
@@ -59,13 +62,13 @@ Her sahnenin 'ai_image_prompt' açıklaması, o sahnenin Türkçe metniyle bireb
   "scenes": [
     {{
       "scene_id": 1,
-      "narration": "Konunun en çarpıcı gerçek tarihi veya mühendislik bilgisini veren güçlü giriş cümlesi.",
+      "narration": "Konunun en çarpıcı gerçek bilgisini veren, tüm sayıların ve birimlerin kısaltmasız yazıyla yazıldığı güçlü giriş cümlesi.",
       "stock_search_terms": ["specific train keyword", "railway history"],
       "ai_image_prompt": "Wide cinematic vertical shot of the exact train/railway described in narration, realistic historical setting, steam and rails clearly visible"
     }},
     {{
       "scene_id": 2,
-      "narration": "Yapım yılı, güzergahı veya teknik rekorunu anlatan somut ikinci cümle.",
+      "narration": "Yapım yılını, güzergahını veya hız rekorunu hiç rakam ve kısaltma kullanmadan tamamen yazıyla anlatan ikinci cümle.",
       "stock_search_terms": ["locomotive engineering", "railway bridge"],
       "ai_image_prompt": "Detailed vertical shot showing the specific route, station, or locomotive engineering described in scene 2 narration"
     }}

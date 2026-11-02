@@ -41,7 +41,7 @@ def build_consistent_prompt(scene: Dict[str, Any], global_style: str) -> str:
     clean_global = global_style.strip().rstrip(",")
     clean_base = base_prompt.strip().rstrip(",")
     return (
-        f"{clean_global}, {clean_base}, "
+        f"{clean_base}, {clean_global}, "
         "vertical 9:16 aspect ratio, photorealistic, masterpiece, sharp focus, no text, no watermark"
     )
 
@@ -204,46 +204,56 @@ def _generate_image_with_bfl_flux_space(prompt: str, seed: int, output_image_pat
     from PIL import Image
 
     clean_prompt = _sanitize_ascii_prompt(prompt)[:350].strip()
-    call_url = "https://black-forest-labs-flux-1-schnell.hf.space/gradio_api/call/infer"
-    payload = {
-        "data": [clean_prompt, int(seed) % 2147483647, False, 768, 1344, 4]
-    }
     headers = {}
     hf_key = os.environ.get("HF_API_KEY", "").strip()
     if hf_key and hf_key.startswith("hf_"):
         headers["Authorization"] = f"Bearer {hf_key}"
 
-    try:
-        print(f"  [BFL FLUX.1-schnell] Sahne görseli üretiliyor (Seed: {seed})...")
-        r_init = requests.post(call_url, json=payload, headers=headers, timeout=15)
-        if r_init.status_code != 200:
-            return False
+    spaces_to_try = [
+        (
+            "https://black-forest-labs-flux-1-schnell.hf.space/gradio_api/call/infer",
+            [clean_prompt, int(seed) % 2147483647, False, 768, 1344, 4]
+        ),
+        (
+            "https://multimodalart-flux-1-merged.hf.space/gradio_api/call/infer",
+            [clean_prompt, int(seed) % 2147483647, False, 768, 1344, 3.5, 8]
+        )
+    ]
 
-        event_id = r_init.json().get("event_id")
-        if not event_id:
-            return False
+    for call_url, data_payload in spaces_to_try:
+        try:
+            space_label = call_url.split("//")[1].split(".")[0]
+            print(f"  [HF FLUX ({space_label})] Sahne görseli üretiliyor (Seed: {seed})...")
+            r_init = requests.post(call_url, json={"data": data_payload}, headers=headers, timeout=15)
+            if r_init.status_code != 200:
+                continue
 
-        r_stream = requests.get(f"{call_url}/{event_id}", headers=headers, timeout=40)
-        if r_stream.status_code != 200:
-            return False
+            event_id = r_init.json().get("event_id")
+            if not event_id:
+                continue
 
-        for line in r_stream.text.splitlines():
-            if line.startswith("data:"):
-                raw_data = line[len("data:"):].strip()
-                parsed = _json.loads(raw_data)
-                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-                    img_url = parsed[0].get("url")
-                    if img_url:
-                        img_resp = requests.get(img_url, headers=headers, timeout=25)
-                        if img_resp.status_code == 200 and len(img_resp.content) > 5000:
-                            img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
-                            if img.size != (1080, 1920):
-                                img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
-                            img.save(output_image_path, "JPEG", quality=94)
-                            print(f"  -> [BFL FLUX.1-schnell] 1080x1920 görsel hazır: {output_image_path}")
-                            return True
-    except Exception as e:
-        print(f"  [Bilgi] BFL FLUX Space adımı atlandı: {e}")
+            r_stream = requests.get(f"{call_url}/{event_id}", headers=headers, timeout=45)
+            if r_stream.status_code != 200:
+                continue
+
+            for line in r_stream.text.splitlines():
+                if line.startswith("data:"):
+                    raw_data = line[len("data:"):].strip()
+                    parsed = _json.loads(raw_data)
+                    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                        img_url = parsed[0].get("url")
+                        if img_url:
+                            img_resp = requests.get(img_url, headers=headers, timeout=25)
+                            if img_resp.status_code == 200 and len(img_resp.content) > 5000:
+                                img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+                                if img.size != (1080, 1920):
+                                    img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
+                                img.save(output_image_path, "JPEG", quality=94)
+                                print(f"  -> [HF FLUX ({space_label})] 1080x1920 görsel hazır: {output_image_path}")
+                                return True
+        except Exception as e:
+            print(f"  [Bilgi] HF FLUX Space ({call_url}) adımı atlandı: {e}")
+            continue
 
     return False
 
@@ -257,7 +267,7 @@ def _generate_image_with_pollinations_flux(prompt: str, seed: int, output_image_
     """
     import re as _re
 
-    clean_prompt = _sanitize_ascii_prompt(prompt)[:260].strip()
+    clean_prompt = _sanitize_ascii_prompt(prompt)[:380].strip()
     encoded_prompt = urllib.parse.quote(clean_prompt, safe="")
     pollinations_key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
 
@@ -340,10 +350,15 @@ def generate_visual_for_scene(
     global_style: str,
     visual_seed: int,
     output_dir: str,
-    prefer_ai_video: bool = True
+    prefer_ai_video: bool = True,
+    use_web_reference: bool = True,
+    topic: str = ""
 ) -> Tuple[str, str]:
     """
     Tek bir sahne için hibrit yapay zeka görseli veya videosu üretir.
+    use_web_reference=True olduğunda önce internetten (Wikimedia / Bing Web Görseller)
+    gerçek bir referans fotoğraf bulur, Qwen 3.8 Vision ile analiz eder ve FLUX.1-schnell
+    ile ona çok benzeyen ancak %100 telifsiz (sıfırdan çizilmiş) 9:16 görsel üretir.
 
     Döndürür:
         Tuple[str, str]: (media_type, file_path)
@@ -353,7 +368,34 @@ def generate_visual_for_scene(
     scene_id = int(scene.get("scene_id", 1))
     # Aynı genel tohumu (seed) korurken her sahneye küçük deterministik ofset ekle
     scene_seed = int(visual_seed) + (scene_id * 7)
-    full_prompt = build_consistent_prompt(scene, global_style)
+    base_prompt = (
+        scene.get("ai_image_prompt")
+        or scene.get("visual_prompt")
+        or scene.get("narration", "cinematic railway scene")
+    )
+
+    if use_web_reference:
+        from reference_image_engine import (
+            find_web_reference_image,
+            analyze_reference_image_for_copyright_free_clone
+        )
+        ref_img_path = find_web_reference_image(
+            scene=scene,
+            topic=topic or base_prompt,
+            output_dir=output_dir
+        )
+        if ref_img_path and os.path.exists(ref_img_path):
+            full_prompt = analyze_reference_image_for_copyright_free_clone(
+                ref_image_path=ref_img_path,
+                scene_narration=scene.get("narration", ""),
+                fallback_prompt=base_prompt,
+                global_style=global_style
+            )
+        else:
+            full_prompt = build_consistent_prompt(scene, global_style)
+    else:
+        full_prompt = build_consistent_prompt(scene, global_style)
+
     scene["ai_image_prompt_enhanced"] = full_prompt
 
     # 1. ÖNCELİK: Hareketli AI Video (FAL_KEY mevcutsa ve prefer_ai_video aktifse)

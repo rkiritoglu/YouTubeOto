@@ -11,6 +11,7 @@ Mimari Darboğaz 2 Çözümü:
 import os
 import json
 import uuid
+import shutil
 import sqlite3
 import datetime
 from typing import Dict, Any, List, Optional
@@ -186,3 +187,42 @@ def list_jobs(limit: int = 30) -> List[Dict[str, Any]]:
                 d["options"] = {}
             result.append(d)
         return result
+
+
+def delete_job_and_files(job_id: str) -> bool:
+    """
+    Belirtilen işe ait tüm yerel dosyaları (output/<job_id>/ klasörü, MP4, sesler, görseller,
+    metadata.json) diskten siler ve işi SQLite veritabanından (Video Galerisi ve Kuyruktan) kaldırır.
+    """
+    init_db()
+    job = get_job(job_id)
+    if job:
+        out_dir = str(job.get("output_dir") or "").strip()
+        vid_path = str(job.get("video_path") or "").strip()
+        meta_path = str(job.get("metadata_path") or "").strip()
+
+        for fpath in (vid_path, meta_path):
+            if fpath and os.path.isfile(fpath):
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+
+        if out_dir and os.path.isdir(out_dir):
+            try:
+                shutil.rmtree(out_dir, ignore_errors=True)
+            except Exception:
+                pass
+        elif vid_path:
+            parent_dir = os.path.dirname(os.path.abspath(vid_path))
+            if os.path.basename(parent_dir) == job_id and os.path.isdir(parent_dir):
+                try:
+                    shutil.rmtree(parent_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM video_jobs WHERE job_id = ?", (job_id,))
+        conn.commit()
+
+    return True

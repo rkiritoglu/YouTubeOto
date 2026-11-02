@@ -222,7 +222,7 @@ def generate_autonomous_railway_topic(past_topics: List[str]) -> Dict[str, str]:
     return chosen
 
 
-def run_daily_autonomous_job(publish_status: str = "public") -> bool:
+def run_daily_autonomous_job(publish_status: str = "private") -> bool:
     """
     Her gün çalışan tam otonom ana döngü:
     1. Geçmişi kontrol eder.
@@ -269,9 +269,9 @@ def run_daily_autonomous_job(publish_status: str = "public") -> bool:
 # ÇALIŞTIRMA BLOKU
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Varsayılan yükleme modu: 'public' (doğrudan kanalda yayına girer)
-    # Eğer önce gizli olarak görmek isterseniz: python daily_runner.py private
-    status = "public"
+    # Varsayılan yükleme modu: 'private' (YouTube Studio'da gizli bekler, onayınızla yayınlanır)
+    # Eğer doğrudan canlıya almak isterseniz: python daily_runner.py public
+    status = "private"
     if len(sys.argv) > 1 and sys.argv[1] in ["public", "private", "unlisted"]:
         status = sys.argv[1]
 

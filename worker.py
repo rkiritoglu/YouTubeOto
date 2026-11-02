@@ -55,7 +55,8 @@ def spawn_worker_for_job(job_id: str) -> None:
         stdout=log_handle,
         stderr=log_handle,
         creationflags=creationflags,
-        close_fds=(os.name != "nt")
+        close_fds=(os.name != "nt"),
+        start_new_session=(os.name != "nt")
     )
 
 
@@ -73,8 +74,12 @@ def execute_job(job_id: str) -> bool:
     script_data: Dict[str, Any] = job.get("script_data") or {}
 
     prefer_ai_video = bool(options.get("prefer_ai_video", True))
-    burn_subtitles = bool(options.get("burn_subtitles", True))
-    edge_voice = str(options.get("edge_voice") or DEFAULT_EDGE_TTS_VOICE)
+    burn_subtitles = bool(options.get("burn_subtitles", False))
+    show_top_banner = bool(options.get("show_top_banner", True))
+    top_banner_text = str(options.get("top_banner_text") or "").strip()
+    text_style_preset = str(options.get("text_style_preset") or "gold_banner")
+    use_web_reference = bool(options.get("use_web_reference", True))
+    edge_voice = str(options.get("edge_voice") or "belgesel_tok_erkek")
 
     os.makedirs(output_dir, exist_ok=True)
     audio_dir = os.path.join(output_dir, "audio")
@@ -143,12 +148,59 @@ def execute_job(job_id: str) -> bool:
         )
 
         # -------------------------------------------------------------------
-        # ADIM 3: Hibrit AI Görsel / Video Üretimi (Global Stil + Sabit Seed)
+        # ADIM 3: Hibrit AI Görsel / Video Üretimi + Kullanıcı Özel Medyası
         # -------------------------------------------------------------------
+        import shutil
+        VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
         total_scenes = len(valid_scenes)
         for idx, scene in enumerate(valid_scenes):
             scene_id = scene.get("scene_id", idx + 1)
             pct = 36 + int(((idx) / max(1, total_scenes)) * 22)
+
+            custom_media = str(scene.get("custom_media_path") or "").strip()
+            if custom_media and os.path.exists(custom_media):
+                ext = os.path.splitext(custom_media)[1].lower()
+                is_vid = ext in VIDEO_EXTS
+                dest_path = os.path.abspath(os.path.join(visuals_dir, f"scene_{scene_id}_custom{ext}"))
+                try:
+                    if os.path.abspath(custom_media) != dest_path:
+                        shutil.copy2(custom_media, dest_path)
+                except Exception:
+                    dest_path = os.path.abspath(custom_media)
+
+                scene["visual_file_path"] = dest_path
+                scene["visual_type"] = "video" if is_vid else "image"
+                scene["visual_source"] = "custom_user_video" if is_vid else "custom_user_image"
+                update_job_progress(
+                    job_id,
+                    progress=pct,
+                    current_step=f"Adım 3/4: Sahne {scene_id}/{total_scenes} için kendi yüklediğiniz {'video' if is_vid else 'görsel'} bağlandı...",
+                    script_data=script_data
+                )
+                continue
+
+            # Eğer kullanıcı Stüdyo ekranında bu sahnenin telifsiz AI görselini önceden üretip onayladıysa tekrar üretme
+            existing_visual = str(scene.get("visual_file_path") or "").strip()
+            if existing_visual and os.path.exists(existing_visual) and os.path.getsize(existing_visual) > 1000:
+                ext = os.path.splitext(existing_visual)[1].lower() or ".jpg"
+                is_vid = ext in VIDEO_EXTS
+                dest_path = os.path.abspath(os.path.join(visuals_dir, f"scene_{scene_id}_approved{ext}"))
+                try:
+                    if os.path.abspath(existing_visual) != dest_path:
+                        shutil.copy2(existing_visual, dest_path)
+                except Exception:
+                    dest_path = os.path.abspath(existing_visual)
+
+                scene["visual_file_path"] = dest_path
+                scene["visual_type"] = scene.get("visual_type") or ("video" if is_vid else "image")
+                update_job_progress(
+                    job_id,
+                    progress=pct,
+                    current_step=f"Adım 3/4: Sahne {scene_id}/{total_scenes} için onayladığınız telifsiz görsel kullanıldı...",
+                    script_data=script_data
+                )
+                continue
+
             update_job_progress(
                 job_id,
                 progress=pct,
@@ -160,21 +212,28 @@ def execute_job(job_id: str) -> bool:
                 global_style=global_style,
                 visual_seed=visual_seed,
                 output_dir=visuals_dir,
-                prefer_ai_video=prefer_ai_video
+                prefer_ai_video=prefer_ai_video,
+                use_web_reference=use_web_reference,
+                topic=topic
             )
             update_job_progress(job_id, script_data=script_data)
 
         # -------------------------------------------------------------------
-        # ADIM 4: Yerel FFmpeg Render (zoompan + setpts + .ASS Altyazı)
+        # ADIM 4: Yerel FFmpeg Render (zoompan + setpts + .ASS Üst Katman & Altyazı)
         # -------------------------------------------------------------------
         def _ffmpeg_progress(pct_val: int, msg: str):
             update_job_progress(job_id, progress=pct_val, current_step=f"Adım 4/4: {msg}")
+
+        effective_banner_text = top_banner_text or script_data.get("title") or topic
 
         final_video_path = render_full_project_ffmpeg(
             scenes=valid_scenes,
             output_dir=output_dir,
             final_video_name="final_shorts.mp4",
             burn_subtitles=burn_subtitles,
+            show_top_banner=show_top_banner,
+            top_banner_text=effective_banner_text,
+            text_style_preset=text_style_preset,
             progress_callback=_ffmpeg_progress
         )
 

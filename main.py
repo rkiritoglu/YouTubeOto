@@ -128,9 +128,24 @@ def run_full_youtube_pipeline(
         )
         print("\n" + "=" * 70)
         print("🎉 TEBRİKLER! TÜM OTOMASYON İŞ AKIŞI BAŞARIYLA TAMAMLANDI!")
-        print(f"📁 Oluşturulan Video: {os.path.abspath(rendered_file)}")
         if video_id and video_id != "SIMULATED_VIDEO_ID_SUCCESS":
-            print(f"🔗 YouTube Canlı Linki: https://youtu.be/{video_id}")
+            print(f"🔗 YouTube Video Linki   : https://youtu.be/{video_id}")
+            print(f"🛠️ YouTube Studio Kontrol : https://studio.youtube.com/video/{video_id}/edit")
+            if publish_status == "private":
+                print("🔒 Video 'GİZLİ' olarak yüklendi! YouTube Studio'dan kontrol edip 'Herkese Açık' yapabilirsiniz.")
+        
+        # Instagram ve TikTok için yerel kopyayı 'hazir_videolar' klasöründe sakla
+        try:
+            import shutil
+            import re
+            os.makedirs("hazir_videolar", exist_ok=True)
+            safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', clean_topic_tag)[:30]
+            archive_path = os.path.join("hazir_videolar", f"{safe_name}.mp4")
+            shutil.copy2(rendered_file, archive_path)
+            print(f"📁 Instagram / TikTok için video kopyası hazır: {os.path.abspath(archive_path)}")
+        except Exception as copy_err:
+            print(f"[Bilgi] Video arşivi kaydedilirken: {copy_err}")
+
         print("=" * 70)
         return True
 

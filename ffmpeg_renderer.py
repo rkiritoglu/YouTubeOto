@@ -32,6 +32,25 @@ def get_ffmpeg_bin() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
+def _has_audio_stream(media_path: str) -> bool:
+    """Verilen video dosyasında ses kanalı (Audio stream) olup olmadığını kontrol eder."""
+    if not media_path or not os.path.exists(media_path):
+        return False
+    try:
+        proc = subprocess.run(
+            [get_ffmpeg_bin(), "-i", media_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=8
+        )
+        return "Audio:" in (proc.stderr or "")
+    except Exception:
+        return False
+
+
 def _build_zoompan_filter(scene_id: int, duration_sec: float, fps: int = FPS) -> str:
     """
     Sahne numarasına göre çeşitlendirilmiş sinematik Ken Burns (zoompan) filtresi üretir.
@@ -88,31 +107,64 @@ def render_single_scene_ffmpeg(
     out_clip_path = os.path.abspath(os.path.join(work_dir, f"rendered_scene_{scene_id}.mp4"))
 
     if visual_type == "video":
-        # Darboğaz 3: AI Video Süresi ile Ses Süresi Senkronizasyonu (setpts + tpad)
-        vid_dur = get_audio_duration_sec(visual_path)
-        if vid_dur <= 0.2:
-            vid_dur = 4.0
+        # Darboğaz 3 + Özel Kullanıcı Videosu Senkronizasyonu
+        total_vid_dur = get_audio_duration_sec(visual_path)
+        if total_vid_dur <= 0.2:
+            total_vid_dur = 4.0
 
-        ratio = duration_sec / vid_dur
-        # Eğer ses videodan biraz uzunsa yumuşak slow-motion (setpts) + son kare klonlama (tpad) uygula
-        pts_factor = max(0.75, min(1.65, ratio))
-        pad_extra = max(0.5, duration_sec - (vid_dur * pts_factor) + 0.5)
+        custom_start_sec = max(0.0, float(scene.get("custom_start_sec") or 0.0))
+        if custom_start_sec >= total_vid_dur:
+            custom_start_sec = 0.0
 
-        vf_chain = (
-            f"setpts={pts_factor:.3f}*PTS,"
-            f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
-            f"crop={TARGET_W}:{TARGET_H},"
-            f"fps={fps},"
-            f"tpad=stop_mode=clone:stop_duration={pad_extra:.2f},"
-            f"format=yuv420p"
-        )
-        cmd = [
-            ffmpeg_exe, "-y",
-            "-i", visual_path,
-            "-i", audio_path,
-            "-vf", vf_chain,
-            "-map", "0:v:0",
-            "-map", "1:a:0",
+        avail_dur = max(0.3, total_vid_dur - custom_start_sec)
+        # Eğer video sesten uzunsa normal hızda (1.0x) oynat ve ses süresinde kes; kısaysa yumuşak uzat
+        if avail_dur >= duration_sec:
+            pts_factor = 1.0
+        else:
+            pts_factor = max(0.75, min(1.65, duration_sec / avail_dur))
+
+        pad_extra = max(0.5, duration_sec - (avail_dur * pts_factor) + 0.5)
+        fit_mode = str(scene.get("custom_fit_mode") or "crop")
+        keep_ambient = bool(scene.get("custom_ambient_audio", False)) and _has_audio_stream(visual_path)
+
+        if fit_mode == "blur_pad":
+            # Yatay videoların kenarlarını kesmeden bulanık arka plan üzerinde tam genişlikte göster
+            v_filter = (
+                f"[0:v]setpts={pts_factor:.3f}*PTS,fps={fps},split=2[bg][fg];"
+                f"[bg]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
+                f"crop={TARGET_W}:{TARGET_H},boxblur=24:4[bgblur];"
+                f"[fg]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease[fgfit];"
+                f"[bgblur][fgfit]overlay=(W-w)/2:(H-h)/2,"
+                f"tpad=stop_mode=clone:stop_duration={pad_extra:.2f},format=yuv420p[vout]"
+            )
+        else:
+            # Tam ekran dikey kırpma (9:16 Center Crop)
+            v_filter = (
+                f"[0:v]setpts={pts_factor:.3f}*PTS,"
+                f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
+                f"crop={TARGET_W}:{TARGET_H},"
+                f"fps={fps},"
+                f"tpad=stop_mode=clone:stop_duration={pad_extra:.2f},"
+                f"format=yuv420p[vout]"
+            )
+
+        input_args = [ffmpeg_exe, "-y"]
+        if custom_start_sec > 0:
+            input_args.extend(["-ss", f"{custom_start_sec:.2f}"])
+        input_args.extend(["-i", visual_path, "-i", audio_path])
+
+        if keep_ambient:
+            filter_complex = (
+                f"{v_filter};"
+                f"[0:a]volume=0.15[amb];"
+                f"[1:a]volume=1.0[tts];"
+                f"[amb][tts]amix=inputs=2:duration=second:dropout_transition=0[aout]"
+            )
+            map_args = ["-filter_complex", filter_complex, "-map", "[vout]", "-map", "[aout]"]
+        else:
+            map_args = ["-filter_complex", v_filter, "-map", "[vout]", "-map", "1:a:0"]
+
+        cmd = input_args + map_args + [
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "20",
@@ -163,12 +215,15 @@ def render_full_project_ffmpeg(
     scenes: List[Dict[str, Any]],
     output_dir: str,
     final_video_name: str = "final_shorts.mp4",
-    burn_subtitles: bool = True,
+    burn_subtitles: bool = False,
+    show_top_banner: bool = False,
+    top_banner_text: str = "",
+    text_style_preset: str = "gold_banner",
     progress_callback: Optional[Callable[[int, str], None]] = None
 ) -> str:
     """
-    Tüm sahneleri FFmpeg ile işler, uç uca birleştirir ve kelime zamanlamalı .ass
-    altyazısını tek geçişte videoya yakarak output_dir altına kaydeder.
+    Tüm sahneleri FFmpeg ile işler, uç uca birleştirir ve üst başlık bandı (Top Banner)
+    ve/veya kelime zamanlamalı .ass altyazısını tek geçişte videoya yakarak output_dir altına kaydeder.
     """
     os.makedirs(output_dir, exist_ok=True)
     work_dir = os.path.join(output_dir, "build_temp")
@@ -188,10 +243,17 @@ def render_full_project_ffmpeg(
         clip_path = render_single_scene_ffmpeg(scene, work_dir=work_dir)
         rendered_clips.append(clip_path)
 
-    # 2. Kelime zamanlamalı .ass altyazı dosyasını üret
+    # 2. Üst Katman Başlığı ve/veya Kelime Zamanlamalı .ass dosyasını üret
     ass_filename = "subtitles.ass"
     ass_Work_path = os.path.join(work_dir, ass_filename)
-    generate_ass_subtitles(scenes, output_ass_path=ass_Work_path)
+    generate_ass_subtitles(
+        scenes,
+        output_ass_path=ass_Work_path,
+        text_style_preset=text_style_preset,
+        show_top_banner=show_top_banner,
+        top_banner_text=top_banner_text,
+        show_bottom_subtitles=burn_subtitles
+    )
     # Kalıcı bir kopyasını da output_dir içine koy
     shutil.copy2(ass_Work_path, os.path.join(output_dir, ass_filename))
 
@@ -215,11 +277,12 @@ def render_full_project_ffmpeg(
 
     final_output_path = os.path.abspath(os.path.join(output_dir, final_video_name))
 
-    # 4. .ASS Altyazısını Tek Geçişte Videoya Yak (Burn-in)
+    # 4. .ASS Üst Katman Yazısını ve/veya Altyazıyı Tek Geçişte Videoya Yak (Burn-in)
     if progress_callback:
-        progress_callback(90, "FFmpeg: Dinamik .ASS altyazılar videoya işleniyor...")
+        progress_callback(90, "FFmpeg: Video üst katman yazıları (.ASS) işleniyor...")
 
-    if burn_subtitles and os.path.exists(ass_Work_path):
+    should_burn_ass = (burn_subtitles or (show_top_banner and bool(top_banner_text.strip())))
+    if should_burn_ass and os.path.exists(ass_Work_path):
         cmd_sub = [
             ffmpeg_exe, "-y",
             "-i", "merged_raw.mp4",

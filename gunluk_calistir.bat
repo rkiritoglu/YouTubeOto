@@ -7,9 +7,10 @@ echo  GUNLUK OTONOM RAYLI SISTEMLER YOUTUBE SHORTS URETIMI BASLATILIYOR
 echo  Tarih / Saat: %date% %time%
 echo ======================================================================
 
-:: Python ile günlük otonom robotu çalıştır ('public' olarak kanala yükler)
-:: Not: Önce gizli denemek isterseniz 'public' yerine 'private' yazabilirsiniz.
-python daily_runner.py public
+:: Python ile günlük otonom robotu çalıştır ('private' olarak YouTube Studio'ya yükler)
+:: Video YouTube Studio'da 'Gizli' olarak bekler; siz izleyip onaylayınca 'Yayınla' dersiniz.
+:: Doğrudan herkese açık yayınlansın isterseniz 'private' yerine 'public' yazabilirsiniz.
+python daily_runner.py private
 
 echo.
 echo ======================================================================

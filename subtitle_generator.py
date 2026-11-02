@@ -1,18 +1,123 @@
 """
-subtitle_generator.py - FFmpeg Donanım Hızlandırmalı .ASS (Advanced SubStation Alpha) Altyazı Motoru
+subtitle_generator.py - FFmpeg Donanım Hızlandırmalı .ASS (Advanced SubStation Alpha) Üst Katman & Altyazı Motoru
 
-Mimari Darboğaz 1 Çözümü:
+Mimari Darboğaz 1 & Görsel Katman Çözümü:
 - MoviePy TextClip ve ImageMagick kullanarak her karede CPU üzerinde metin render etmek yerine,
-  milisaniye hassasiyetindeki kelime zamanlamalarını (word_timings) standart .ass formatına dönüştürür.
-- FFmpeg'in yerel 'ass' / 'subtitles' filtresi bu dosyayı C hızında, sıfır ekstra RAM maliyetiyle
-  doğrudan videoya gömer (burn-in).
+  hem video üst katman başlık bandını (Top Banner Overlay) hem de kelime zamanlamalı alt yazıları
+  standart .ass formatına dönüştürür.
+- FFmpeg'in yerel 'ass' filtresi bu dosyayı C hızında, sıfır ekstra RAM maliyetiyle
+  ve seçilen yazı stiline göre doğrudan videoya gömer (burn-in).
 """
 
 import os
 from typing import List, Dict, Any
 
 
-ASS_HEADER_TEMPLATE = """[Script Info]
+# ---------------------------------------------------------------------------
+# VİDEO ÜST KATMAN (OVERLAY) VE ALTYAZI YAZI STİLİ ŞABLONLARI
+# Not: ASS renk formatı &HAABBGGRR (Alpha, Blue, Green, Red) şeklindedir.
+# BorderStyle=3 -> Arka plan kutulu (Opaque Box), BorderStyle=1 -> Kontur + Gölge
+# Alignment=8 -> Üst-Orta (Top Banner), Alignment=2 -> Alt-Orta (Alt Yazı)
+# ---------------------------------------------------------------------------
+OVERLAY_TEXT_STYLES: Dict[str, Dict[str, Any]] = {
+    "gold_banner": {
+        "label": "🔥 Altın Sarısı & Siyah Kutu (Viral Üst Bant Stili)",
+        "font": "Arial",
+        "top_fontsize": 54,
+        "sub_fontsize": 68,
+        "primary_color": "&H00FFFFFF",      # Beyaz
+        "highlight_color": "&H0000D7FF",    # Altın Sarısı (RGB: 255, 215, 0 -> BGR: 00D7FF)
+        "top_text_color": "&H0000D7FF",     # Üst başlık: Altın Sarısı
+        "outline_color": "&H30000000",      # Yarı saydam siyah kutu rengi
+        "back_color": "&H60000000",         # Gölge / arka kutu
+        "border_style": 3,                  # Kutu (Boxed Banner)
+        "outline": 16,
+        "shadow": 0,
+        "uppercase": True
+    },
+    "cinema_classic": {
+        "label": "🎬 Sinematik Belgesel (Netflix / BBC Zarif Stil)",
+        "font": "Georgia",
+        "top_fontsize": 50,
+        "sub_fontsize": 64,
+        "primary_color": "&H00F5F5F5",      # Yumuşak Kırık Beyaz
+        "highlight_color": "&H0055D4FF",    # Sıcak Kehribar / Altın
+        "top_text_color": "&H00FFFFFF",     # Üst başlık: Zarif Beyaz
+        "outline_color": "&H00000000",      # Siyah kontur
+        "back_color": "&H80000000",         # Yumuşak gölge
+        "border_style": 1,                  # Kontur + Gölge
+        "outline": 4,
+        "shadow": 3,
+        "uppercase": False
+    },
+    "hormozi_viral": {
+        "label": "⚡ Hormozi Viral Shorts (Büyük Kalın Vurgulu Stil)",
+        "font": "Impact",
+        "top_fontsize": 58,
+        "sub_fontsize": 76,
+        "primary_color": "&H00FFFFFF",      # Parlak Beyaz
+        "highlight_color": "&H0000FF66",    # Parlak Canlı Yeşil / Sarı Vurgu
+        "top_text_color": "&H0000FFFF",     # Parlak Sarı Üst Başlık
+        "outline_color": "&H00000000",      # Kalın Siyah Dış Kontur
+        "back_color": "&H90000000",
+        "border_style": 1,
+        "outline": 6,
+        "shadow": 4,
+        "uppercase": True
+    },
+    "modern_box": {
+        "label": "📦 Modern Haber / Bilgi Kartı (Lacivert-Siyah Bant)",
+        "font": "Verdana",
+        "top_fontsize": 48,
+        "sub_fontsize": 62,
+        "primary_color": "&H00FFFFFF",      # Beyaz
+        "highlight_color": "&H00FFFF00",    # Camgöbeği (Cyan)
+        "top_text_color": "&H00FFFFFF",     # Beyaz
+        "outline_color": "&H2528180C",      # Koyu Lacivert-Siyah Kutu
+        "back_color": "&H5028180C",
+        "border_style": 3,                  # Kutu (Box)
+        "outline": 14,
+        "shadow": 0,
+        "uppercase": True
+    },
+    "neon_cyber": {
+        "label": "💠 Neon Teknoloji Stili (Parlak Mavi-Beyaz Kontur)",
+        "font": "Trebuchet MS",
+        "top_fontsize": 52,
+        "sub_fontsize": 70,
+        "primary_color": "&H00FFFFFF",      # Beyaz
+        "highlight_color": "&H00FFFF00",    # Parlak Cyan
+        "top_text_color": "&H00FFFF00",     # Parlak Cyan Üst Başlık
+        "outline_color": "&H00803300",      # Koyu Mavi Dış Parlama Konturu
+        "back_color": "&H80000000",
+        "border_style": 1,
+        "outline": 5,
+        "shadow": 3,
+        "uppercase": True
+    }
+}
+
+
+def _build_ass_header(style_key: str = "gold_banner") -> str:
+    """Seçilen yazı stiline göre ASS başlığını ve [V4+ Styles] tanımlarını üretir."""
+    st = OVERLAY_TEXT_STYLES.get(style_key, OVERLAY_TEXT_STYLES["gold_banner"])
+    font = st["font"]
+    top_fs = st["top_fontsize"]
+    sub_fs = st["sub_fontsize"]
+    prim = st["primary_color"]
+    top_c = st["top_text_color"]
+    out_c = st["outline_color"]
+    back_c = st["back_color"]
+    b_style = st["border_style"]
+    outline = st["outline"]
+    shadow = st["shadow"]
+
+    # TopBanner her zaman kolay okunması için kutulu veya belirgin konturlu üst katmandır (Alignment=8, MarginV=155)
+    top_border_style = 3 if b_style == 3 else 1
+    top_outline = 14 if top_border_style == 3 else 5
+    top_shadow = 0 if top_border_style == 3 else 3
+
+    return f"""[Script Info]
 ; Generated by YouTubeOto AI Studio
 ScriptType: v4.00+
 PlayResX: 1080
@@ -23,8 +128,8 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ShortsMain,Arial,74,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,5,3,2,70,70,420,1
-Style: ShortsHighlight,Arial,78,&H0000D7FF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,6,3,2,70,70,420,1
+Style: TopBanner,{font},{top_fs},{top_c},&H00FFFFFF,{out_c},{back_c},-1,0,0,0,100,100,1.5,0,{top_border_style},{top_outline},{top_shadow},8,65,65,155,1
+Style: ShortsMain,{font},{sub_fs},{prim},&H0000FFFF,{out_c},{back_c},-1,0,0,0,100,100,1,0,{b_style},{outline},{shadow},2,70,70,420,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -48,19 +153,63 @@ def _escape_ass_text(text: str) -> str:
     return text.replace("{", "").replace("}", "").replace("\n", " ").strip()
 
 
+def _turkish_upper(text: str) -> str:
+    """Türkçe karakter duyarlı (i -> İ, ı -> I) büyük harf dönüştürücü."""
+    return text.replace("i", "İ").replace("ı", "I").upper()
+
+
+def _wrap_banner_text(text: str, max_chars_per_line: int = 26) -> str:
+    """
+    Üst başlık metnini 1080px dikey ekranda taşmaması için
+    en fazla 2 dengeli satıra (\\N) böler ve hashtag'leri temizler.
+    """
+    words = [w for w in text.split() if not w.startswith("#")]
+    clean = " ".join(words).strip()
+    if len(clean) <= max_chars_per_line:
+        return clean
+
+    lines: List[str] = []
+    current_line: List[str] = []
+    current_len = 0
+
+    for w in words:
+        if current_len + len(w) + (1 if current_line else 0) <= max_chars_per_line or not current_line:
+            current_line.append(w)
+            current_len += len(w) + (1 if len(current_line) > 1 else 0)
+        else:
+            lines.append(" ".join(current_line))
+            current_line = [w]
+            current_len = len(w)
+            if len(lines) == 2:
+                break
+
+    if current_line and len(lines) < 2:
+        lines.append(" ".join(current_line))
+
+    return r"\N".join(lines[:2])
+
+
 def generate_ass_subtitles(
     scenes: List[Dict[str, Any]],
     output_ass_path: str,
-    words_per_group: int = 3
+    words_per_group: int = 3,
+    text_style_preset: str = "gold_banner",
+    show_top_banner: bool = False,
+    top_banner_text: str = "",
+    show_bottom_subtitles: bool = False
 ) -> str:
     """
     Sahnelerin kesin ses sürelerini (duration_sec) ve kelime zamanlamalarını (word_timings)
-    kullanarak 1080x1920 dikey YouTube Shorts için dinamik kelime vurgulu .ass dosyası oluşturur.
-
-    Her 2-3 kelimelik grupta o an okunan aktif kelime altın sarısı (&H0000D7FF&) ve hafif büyük
-    olarak vurgulanır (Karaoke / Hormozi Shorts stili).
+    kullanarak 1080x1920 dikey YouTube Shorts için:
+      1. İsteğe bağlı Üst Katman Başlık Bandı (TopBanner - Layer 1)
+      2. İsteğe bağlı Dinamik Kelime Vurgulu Alt Yazı (ShortsMain - Layer 0)
+    içeren .ass dosyasını oluşturur.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_ass_path)), exist_ok=True)
+    style_cfg = OVERLAY_TEXT_STYLES.get(text_style_preset, OVERLAY_TEXT_STYLES["gold_banner"])
+    use_upper = bool(style_cfg.get("uppercase", True))
+    hl_color = style_cfg.get("highlight_color", "&H0000D7FF")
+    prim_color = style_cfg.get("primary_color", "&H00FFFFFF")
 
     events_lines: List[str] = []
     time_offset = 0.0
@@ -73,53 +222,69 @@ def generate_ass_subtitles(
         word_timings = scene.get("word_timings", [])
         narration = scene.get("narration", "").strip()
 
-        # Eğer word_timings boşsa cümleyi eşit parçalara böl
-        if not word_timings and narration:
-            from audio_generator import build_proportional_word_timings
-            word_timings = build_proportional_word_timings(narration, scene_dur)
+        if show_bottom_subtitles:
+            # Eğer word_timings boşsa cümleyi eşit parçalara böl
+            if not word_timings and narration:
+                from audio_generator import build_proportional_word_timings
+                word_timings = build_proportional_word_timings(narration, scene_dur)
 
-        # Kelimeleri 3'erli gruplara (chunk) ayır
-        for i in range(0, len(word_timings), words_per_group):
-            group = word_timings[i : i + words_per_group]
-            if not group:
-                continue
+            # Kelimeleri 3'erli gruplara (chunk) ayır
+            for i in range(0, len(word_timings), words_per_group):
+                group = word_timings[i : i + words_per_group]
+                if not group:
+                    continue
 
-            # Grup içindeki her kelimenin okunduğu zaman diliminde o kelimeyi vurgula
-            for active_idx, active_word_info in enumerate(group):
-                w_start = time_offset + float(active_word_info.get("start", 0.0))
-                w_end = time_offset + float(active_word_info.get("end", 0.0))
+                # Grup içindeki her kelimenin okunduğu zaman diliminde o kelimeyi vurgula
+                for active_idx, active_word_info in enumerate(group):
+                    w_start = time_offset + float(active_word_info.get("start", 0.0))
+                    w_end = time_offset + float(active_word_info.get("end", 0.0))
 
-                # Grup içindeki bir sonraki kelimenin başlangıcına kadar boşluk kalmasın
-                if active_idx + 1 < len(group):
-                    next_start = time_offset + float(group[active_idx + 1].get("start", w_end))
-                    if next_start > w_start:
-                        w_end = next_start
+                    if active_idx + 1 < len(group):
+                        next_start = time_offset + float(group[active_idx + 1].get("start", w_end))
+                        if next_start > w_start:
+                            w_end = next_start
 
-                if w_end <= w_start:
-                    w_end = w_start + 0.15
+                    if w_end <= w_start:
+                        w_end = w_start + 0.15
 
-                rendered_words = []
-                for idx, w_obj in enumerate(group):
-                    clean_w = _escape_ass_text(w_obj.get("word", "")).upper()
-                    if not clean_w:
-                        continue
-                    if idx == active_idx:
-                        # Aktif okunan kelime: Altın Sarısı (&H0000D7FF&)
-                        rendered_words.append(r"{\c&H0000D7FF&\fscx108\fscy108}" + clean_w + r"{\c&H00FFFFFF&\fscx100\fscy100}")
-                    else:
-                        rendered_words.append(clean_w)
+                    rendered_words = []
+                    for idx, w_obj in enumerate(group):
+                        raw_w = _escape_ass_text(w_obj.get("word", ""))
+                        clean_w = _turkish_upper(raw_w) if use_upper else raw_w
+                        if not clean_w:
+                            continue
+                        if idx == active_idx:
+                            rendered_words.append(
+                                f"{{\\c{hl_color}\\fscx108\\fscy108}}{clean_w}{{\\c{prim_color}\\fscx100\\fscy100}}"
+                            )
+                        else:
+                            rendered_words.append(clean_w)
 
-                line_text = " ".join(rendered_words)
-                start_str = _format_ass_time(w_start)
-                end_str = _format_ass_time(w_end)
-                events_lines.append(
-                    f"Dialogue: 0,{start_str},{end_str},ShortsMain,,0,0,0,,{line_text}"
-                )
+                    line_text = " ".join(rendered_words)
+                    start_str = _format_ass_time(w_start)
+                    end_str = _format_ass_time(w_end)
+                    events_lines.append(
+                        f"Dialogue: 0,{start_str},{end_str},ShortsMain,,0,0,0,,{line_text}"
+                    )
 
         time_offset += scene_dur
 
+    # Üst Katman Başlık Bandı (Top Banner Overlay - Layer 1)
+    if show_top_banner and top_banner_text.strip() and time_offset > 0:
+        clean_banner = _escape_ass_text(top_banner_text.strip())
+        if use_upper:
+            clean_banner = _turkish_upper(clean_banner)
+        wrapped_banner = _wrap_banner_text(clean_banner, max_chars_per_line=26)
+        end_total_str = _format_ass_time(time_offset)
+        # Hafif fade-in (250ms) ile tüm video boyunca üst katmanda sabit kalır
+        events_lines.insert(
+            0,
+            f"Dialogue: 1,0:00:00.00,{end_total_str},TopBanner,,0,0,0,,{{\\fad(250,200)}}{wrapped_banner}"
+        )
+
+    header_str = _build_ass_header(text_style_preset)
     with open(output_ass_path, "w", encoding="utf-8-sig") as f:
-        f.write(ASS_HEADER_TEMPLATE)
+        f.write(header_str)
         for line in events_lines:
             f.write(line + "\n")
 
